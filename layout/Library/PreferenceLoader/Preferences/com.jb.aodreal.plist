@@ -1,9 +1,9 @@
 {
     entry = {
-        bundle = "RealAODPrefs";
+        bundle = "AODREALPrefs";
         cell = PSLinkCell;
-        detail = "RealAODRootListController";
+        detail = "AODREALRootListController";
         icon = "icon.png";
-        label = "RealAOD";
+        label = "AOD REAL";
     };
 }
