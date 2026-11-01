@@ -2,6 +2,26 @@
 // TẦNG 0: ÉP AOD ẨN LÊN ĐỜI THẤP
 //==========================
 
+#import <UIKit/UIKit.h>
+
+// Khai báo các lớp private liên quan đến AOD
+@interface BLSBacklight : NSObject
++ (BOOL)isAlwaysOnEnabledByHardware;
+@end
+
+@interface BLSHAlwaysOnPresentationEngine : NSObject
+- (BOOL)isAlwaysOnSupported;
+@end
+
+@interface CBDisplayModule : NSObject
+- (BOOL)isAlwaysOnDisplaySupported;
+@end
+
+@interface DBRDisplayController : NSObject
+- (BOOL)shouldShowAlwaysOnDisplaySpecifier;
+- (BOOL)isAlwaysOnDisplaySupported;
+@end
+
 %group Group_Aod_Setting
 
 // 1. BacklightServices (Tầng kiểm tra phần cứng)
