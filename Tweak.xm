@@ -22,18 +22,42 @@
 - (void)reloadSpecifiers;
 @end
 
+@interface CAWindowServerDisplay : NSObject
+- (id)currentMode;
+- (BOOL)supportsVariableRefreshRate;
+- (BOOL)supportsLowPowerRefreshRate;
+- (id)modeWithName:(id)arg1;
+@end
+
+@interface CADisplay : NSObject
+- (CAFrameRateRange)preferredFrameRateRange;
+@end
+
 //==============================================================
-// CÔNG TẮC TỔNG (MASTER SWITCH) — MẶC ĐỊNH TẮT
+// BIẾN TOÀN CỤC THEO DÕI TRẠNG THÁI AOD & THÔNG BÁO
 //==============================================================
+static BOOL gIsAODActive = NO;
+static BOOL gHasActiveNotification = NO;
+
+// Kiểm tra Master Switch
 static BOOL isAODMasterEnabled(void) {
     Boolean valid = false;
     Boolean val = CFPreferencesGetAppBooleanValue(
         CFSTR("enabled"),
-        CFSTR("com.jb.aodreal"),
+        CFSTR("com.yourname.realaod"),
         &valid
     );
-    if (!valid) return NO; // Mặc định TẮT lần đầu
+    if (!valid) return NO;
     return (BOOL)val;
+}
+
+// Bật tạm thời 50Hz khi có thông báo đáp xuống
+static void TriggerNotificationBoost(void) {
+    gHasActiveNotification = YES;
+    // Duy trì 50Hz trong 3.5 giây để chạy xong animation nở banner và trượt
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        gHasActiveNotification = NO;
+    });
 }
 
 //==============================================================
@@ -174,7 +198,7 @@ static BOOL isAODMasterEnabled(void) {
 
 
 //==============================================================
-// NHÓM 2: BACKBOARDD
+// NHÓM 2: BACKBOARDD (KHỐNG CHẾ HZ/FPS & WATCHDOG)
 //==============================================================
 %group Group_Backboardd
 
@@ -198,7 +222,13 @@ static BOOL isAODMasterEnabled(void) {
 - (long long)backlightState {
     long long state = %orig;
     if (isAODMasterEnabled() && state == 0) {
+        gIsAODActive = YES;
         return 2; // BLSBacklightStateAlwaysOn
+    }
+    if (state != 2 && state != 0) {
+        // Khi thoát AOD (mở sáng hoàn toàn hoặc vào màn hình khóa): Trả về quyền cho OS
+        gIsAODActive = NO;
+        gHasActiveNotification = NO;
     }
     return state;
 }
@@ -208,50 +238,30 @@ static BOOL isAODMasterEnabled(void) {
 %end
 
 %hook BLSHAlwaysOnPresentationEngine
-- (BOOL)isAlwaysOnSupported {
-    return isAODMasterEnabled() ? YES : %orig;
-}
-- (BOOL)isAlwaysOnActive {
-    return isAODMasterEnabled() ? YES : %orig;
-}
-- (BOOL)isAlwaysOnEnabled {
-    return isAODMasterEnabled() ? YES : %orig;
-}
-- (BOOL)isAlwaysOnSuppressed {
-    return isAODMasterEnabled() ? NO : %orig;
-}
+- (BOOL)isAlwaysOnSupported { return isAODMasterEnabled() ? YES : %orig; }
+- (BOOL)isAlwaysOnActive { return isAODMasterEnabled() ? YES : %orig; }
+- (BOOL)isAlwaysOnEnabled { return isAODMasterEnabled() ? YES : %orig; }
+- (BOOL)isAlwaysOnSuppressed { return isAODMasterEnabled() ? NO : %orig; }
 %end
 
 %hook BLSHAlwaysOnSuppressionAssertion
-- (BOOL)isSuppressed {
-    return isAODMasterEnabled() ? NO : %orig;
-}
+- (BOOL)isSuppressed { return isAODMasterEnabled() ? NO : %orig; }
 %end
 
 %hook BLSHBacklightSceneHostEnvironment
-- (BOOL)supportsAlwaysOn {
-    return isAODMasterEnabled() ? YES : %orig;
-}
-- (BOOL)isAlwaysOnActive {
-    return isAODMasterEnabled() ? YES : %orig;
-}
+- (BOOL)supportsAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
+- (BOOL)isAlwaysOnActive { return isAODMasterEnabled() ? YES : %orig; }
 - (long long)visualState {
     long long state = %orig;
     if (isAODMasterEnabled() && state == 0) return 2;
     return state;
 }
-- (BOOL)isClientActive {
-    return isAODMasterEnabled() ? YES : %orig;
-}
+- (BOOL)isClientActive { return isAODMasterEnabled() ? YES : %orig; }
 %end
 
 %hook CAWindowServerDisplay
-- (BOOL)supportsVariableRefreshRate {
-    return isAODMasterEnabled() ? YES : %orig;
-}
-- (BOOL)supportsLowPowerRefreshRate {
-    return isAODMasterEnabled() ? YES : %orig;
-}
+- (BOOL)supportsVariableRefreshRate { return isAODMasterEnabled() ? YES : %orig; }
+- (BOOL)supportsLowPowerRefreshRate { return isAODMasterEnabled() ? YES : %orig; }
 - (id)modeWithName:(id)arg1 {
     id mode = %orig;
     if (isAODMasterEnabled() && !mode) {
@@ -261,11 +271,27 @@ static BOOL isAODMasterEnabled(void) {
 }
 %end
 
+// Cưỡng bức FPS hiển thị tầng QuartzCore của backboardd
+%hook CADisplay
+- (CAFrameRateRange)preferredFrameRateRange {
+    if (isAODMasterEnabled() && gIsAODActive) {
+        if (gHasActiveNotification) {
+            // Khi có thông báo: Ép giữ 50 FPS
+            return CAFrameRateRangeMake(50.0f, 50.0f, 50.0f);
+        }
+        // Ở trạng thái AOD tĩnh: Ép hạ xuống 2-5 FPS để tiết kiệm năng lượng
+        return CAFrameRateRangeMake(2.0f, 5.0f, 2.0f);
+    }
+    // Thoát AOD: Ngay lập tức trả quyền hoàn toàn cho OS quản lý
+    return %orig;
+}
+%end
+
 %end // Group_Backboardd
 
 
 //==============================================================
-// NHÓM 3: SPRINGBOARD
+// NHÓM 3: SPRINGBOARD (ĐIỀU PHỐI THÔNG BÁO & XUNG NHỊP NỀN)
 //==============================================================
 %group Group_SpringBoard
 
@@ -282,14 +308,64 @@ static BOOL isAODMasterEnabled(void) {
 - (BOOL)shouldPreventBacklightBlankingForAlwaysOn {
     return isAODMasterEnabled() ? YES : %orig;
 }
+- (void)lockUIFromSource:(int)source withOptions:(id)options {
+    %orig;
+    if (isAODMasterEnabled()) {
+        gIsAODActive = YES;
+    }
+}
+- (void)unlockUIFromSource:(int)source withOptions:(id)options {
+    %orig;
+    // Mở khóa: Ngay lập tức tắt cờ AOD, giải phóng xung nhịp
+    gIsAODActive = NO;
+    gHasActiveNotification = NO;
+}
 %end
 
+// Bắt sự kiện thông báo xuất hiện (Notification Arrival) để kéo FPS lên 50
+%hook NCNotificationDispatcher
+- (void)postNotificationWithRequest:(id)request {
+    %orig;
+    if (gIsAODActive) {
+        TriggerNotificationBoost();
+    }
+}
+%end
+
+%hook SBNCNotificationDispatcher
+- (void)_postNotificationRequest:(id)request {
+    %orig;
+    if (gIsAODActive) {
+        TriggerNotificationBoost();
+    }
+}
+%end
+
+// Điều chỉnh độ sáng tối thiểu khi vào AOD
 %hook SBBacklightController
 - (void)animateBacklightToFactor:(float)factor duration:(double)duration source:(long long)source completion:(id)completion {
-    if (isAODMasterEnabled() && factor <= 0.05f) {
-        factor = 0.015f;
+    if (isAODMasterEnabled()) {
+        if (factor <= 0.05f) {
+            gIsAODActive = YES;
+            factor = 0.015f; // Giữ độ sáng mờ tối thiểu
+        } else {
+            // Khi sáng màn hình trở lại: Tắt AOD ngay lập tức
+            gIsAODActive = NO;
+            gHasActiveNotification = NO;
+        }
     }
     %orig(factor, duration, source, completion);
+}
+%end
+
+// Ép hạ xung nhịp điều phối ứng dụng (App Suspension/QoS) nhưng giữ nguyên luồng mạng APNs
+%hook ProcessControl
+- (BOOL)hasBackgroundTasksSuspended {
+    if (gIsAODActive) {
+        // Cho phép các tác vụ nền duy trì mạng để đẩy thông báo
+        return NO;
+    }
+    return %orig;
 }
 %end
 
