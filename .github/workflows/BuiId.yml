@@ -1,0 +1,70 @@
+name: Build LiquidMorph tweak
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build .deb and Repo
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential fakeroot rsync curl git perl dpkg-dev bzip2 zstd unzip xz-utils sudo
+
+      - name: Install Theos via Official Script
+        env:
+          THEOS: ${{ github.workspace }}/theos
+        run: |
+          export THEOS="$THEOS"
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+
+      - name: Build package
+        env:
+          THEOS: ${{ github.workspace }}/theos
+        run: |
+          export PATH="$THEOS/bin:$PATH"
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+
+      - name: Make Repository Files for Sileo & Find Deb
+        run: |
+          mkdir -p public/debs
+          
+          # Quét và tìm mọi file .deb được sinh ra rồi copy vào thư mục public/debs
+          find . -name "*.deb" ! -path "./public/*" -exec cp -v {} public/debs/ \;
+          
+          # Kiểm tra nếu không có file .deb thì báo lỗi dừng workflow
+          if [ -z "$(ls -A public/debs)" ]; then
+             echo "Error: Không tìm thấy file .deb nào sau khi build!"
+             exit 1
+          fi
+          
+          cd public
+          dpkg-scanpackages -m debs /dev/null > Packages
+          bzip2 -9 -c Packages > Packages.bz2
+          zstd -c Packages > Packages.zst
+          
+          cat << 'EOF' > Release
+          Origin: LiquidMorph Repo
+          Label: LiquidMorph Repo
+          Suite: stable
+          Version: 1.0
+          Codename: ios
+          Architectures: iphoneos-arm64
+          Components: main
+          Description: Repository for LiquidMorph Tweak
+          EOF
+          cd ..
+
+      - name: Upload Repository Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: repository
+          path: public/
