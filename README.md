@@ -49,8 +49,8 @@
 | Thiết bị | iOS | Trạng thái |
 |---|---|---|
 | iPhone XS / XS Max | 18.0+ | ✅ Hoạt động đầy đủ |
-| iPhone XS / XS Max | 16.x – 17.x | ⚠️ Hook chạy nhưng engine có thể không tồn tại |
-| iPhone 8 / 8 Plus / X | 16.x | | ✅ Hoạt động đầy đủ |
+| iPhone XS / XS Max | 16.x – 17.x | ⚠️ Thử Nghiệm (Chưa thể kiểm chứng) |
+| iPhone 8 / 8 Plus / X | 16.x | ✅ Hoạt động đầy đủ |
 | iPhone 11 trở lên | 16.0+ | ⚠️ Thử nghiệm (chưa kiểm chứng) |
 
 > **Lưu ý**: iPhone 6s/7Plus dừng ở iOS 16.7.x — không thể lên iOS 17/18. Các máy này không có engine AOD gốc trong iOS, nên tweak sẽ không có tác dụng.
@@ -61,7 +61,7 @@
 
 ### Yêu cầu
 
-- Thiết bị đã **jailbreak** (Dopamine, palera1n, unc0ver, v.v.)
+- Thiết bị đã **jailbreak** (Dopamine, palera1n)
 - **Theos** đã cài đặt (nếu build từ source)
 - **PreferenceLoader** (để hiện Settings)
 
@@ -70,5 +70,5 @@
 ```bash
 # Tải file .deb từ Releases
 # Chuyển vào thiết bị qua SSH/SFTP
-dpkg -i com.yourname.realaod_1.0_iphoneos-arm.deb
+dpkg -i com.jb.aodreal_0.0.1_iphoneos-arm64.deb
 killall -9 SpringBoard
