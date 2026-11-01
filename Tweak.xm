@@ -29,7 +29,7 @@ static BOOL isAODMasterEnabled(void) {
     Boolean valid = false;
     Boolean val = CFPreferencesGetAppBooleanValue(
         CFSTR("enabled"),
-        CFSTR("com.yourname.realaod"),
+        CFSTR("com.jb.aodreal"),
         &valid
     );
     if (!valid) return NO; // Mặc định TẮT lần đầu
