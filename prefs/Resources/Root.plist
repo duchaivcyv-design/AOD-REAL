@@ -8,7 +8,7 @@
             <key>cell</key>
             <string>PSGroupCell</string>
             <key>label</key>
-            <string>RealAOD Settings</string>
+            <string>AOD REAL Settings</string>
             <key>footerText</key>
             <string>Chỉ hoạt động trên iOS 16/18.0 (iPhone 8/XMS Max). iOS 15 không có engine AOD gốc.</string>
         </dict>
