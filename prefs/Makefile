@@ -9,6 +9,5 @@ AODREALPrefs_FRAMEWORKS = UIKit Foundation
 AODREALPrefs_INSTALL_PATH = /Library/PreferenceBundles
 AODREALPrefs_PRIVATE_FRAMEWORKS = Preferences
 AODREALPrefs_RESOURCE_DIR = Resources
-AODREALPrefs_CFLAGS = -fobjc-arc
 
 include $(THEOS_MAKE_PATH)/bundle.mk
