@@ -1,4 +1,4 @@
-name: Build LiquidMorph tweak
+name: Build AOD REAL tweak
 
 on:
   push:
@@ -19,14 +19,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential fakeroot rsync curl git perl dpkg-dev bzip2 zstd unzip xz-utils sudo libxml2-dev
 
-      - name: Install Theos via Official Script
+      - name: Install Theos manually
         env:
           THEOS: ${{ github.workspace }}/theos
-          CI: 1
         run: |
           export THEOS="$THEOS"
-          # Workaround: Ubuntu 26.04 đổi tên libxml2 → libxml2-dev
-          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos | sed 's/ libxml2/ libxml2-dev/g')"
+          # Clone Theos
+          git clone --recursive https://github.com/theos/theos.git "$THEOS"
+          
+          # Tải SDK trực tiếp (không qua api.github.com)
+          mkdir -p "$THEOS/sdks"
+          curl -LO https://github.com/theos/sdks/archive/master.zip
+          TMP=$(mktemp -d)
+          unzip -q master.zip -d "$TMP"
+          mv "$TMP"/sdks-master/*.sdk "$THEOS/sdks/"
+          rm -rf master.zip "$TMP"
+          
+          # Xác minh SDK
+          echo "=== SDKs installed ==="
+          ls "$THEOS/sdks/"
 
       - name: Build package
         env:
@@ -39,7 +50,7 @@ jobs:
         run: |
           mkdir -p public/debs
           
-          # Quét và tìm mọi file .deb được sinh ra rồi copy vào thư mục public/debs
+          # Tìm mọi file .deb được sinh ra rồi copy vào public/debs
           find . -name "*.deb" ! -path "./public/*" -exec cp -v {} public/debs/ \;
           
           # Kiểm tra nếu không có file .deb thì báo lỗi dừng workflow
@@ -54,14 +65,14 @@ jobs:
           zstd -c Packages > Packages.zst
           
           cat << 'EOF' > Release
-          Origin: LiquidMorph Repo
-          Label: LiquidMorph Repo
+          Origin: AOD REAL Repo
+          Label: AOD REAL Repo
           Suite: stable
           Version: 1.0
           Codename: ios
           Architectures: iphoneos-arm64
           Components: main
-          Description: Repository for LiquidMorph Tweak
+          Description: Repository for AOD REAL Tweak
           EOF
           cd ..
 
