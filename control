@@ -1,0 +1,9 @@
+Package: com.jb.aodreal
+Name: AOD REAL
+Version: 0.0.1
+Architecture: iphoneos-arm64
+Description: Unlock native AOD engine (iOS 16-18.0 only for 8/XSM)
+Maintainer: jb
+Author: jb
+Section: Tweaks
+Depends: mobilesubstrate, preferenceloader, firmware (>= 16.0)
