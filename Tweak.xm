@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <QuartzCore/QuartzCore.h>
+#import <QuartzCore/CAFrameRateRange.h>
 
 //==============================================================
 // KHAI BÁO GIAO THỨC & INTERFACE NỘI BỘ
@@ -31,30 +32,28 @@
 
 @interface CADisplay : NSObject
 - (CAFrameRateRange)preferredFrameRateRange;
+- (void)setPreferredFrameRateRange:(CAFrameRateRange)range;
 @end
 
 //==============================================================
-// BIẾN TOÀN CỤC THEO DÕI TRẠNG THÁI AOD & THÔNG BÁO
+// BIẾN TOÀN CỤC
 //==============================================================
 static BOOL gIsAODActive = NO;
 static BOOL gHasActiveNotification = NO;
 
-// Kiểm tra Master Switch
 static BOOL isAODMasterEnabled(void) {
     Boolean valid = false;
     Boolean val = CFPreferencesGetAppBooleanValue(
         CFSTR("enabled"),
-        CFSTR("com.yourname.realaod"),
+        CFSTR("com.jb.aodreal"),   // ← sửa domain
         &valid
     );
     if (!valid) return NO;
     return (BOOL)val;
 }
 
-// Bật tạm thời 50Hz khi có thông báo đáp xuống
 static void TriggerNotificationBoost(void) {
     gHasActiveNotification = YES;
-    // Duy trì 50Hz trong 3.5 giây để chạy xong animation nở banner và trượt
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         gHasActiveNotification = NO;
     });
@@ -198,7 +197,7 @@ static void TriggerNotificationBoost(void) {
 
 
 //==============================================================
-// NHÓM 2: BACKBOARDD (KHỐNG CHẾ HZ/FPS & WATCHDOG)
+// NHÓM 2: BACKBOARDD
 //==============================================================
 %group Group_Backboardd
 
@@ -223,10 +222,9 @@ static void TriggerNotificationBoost(void) {
     long long state = %orig;
     if (isAODMasterEnabled() && state == 0) {
         gIsAODActive = YES;
-        return 2; // BLSBacklightStateAlwaysOn
+        return 2;
     }
     if (state != 2 && state != 0) {
-        // Khi thoát AOD (mở sáng hoàn toàn hoặc vào màn hình khóa): Trả về quyền cho OS
         gIsAODActive = NO;
         gHasActiveNotification = NO;
     }
@@ -271,19 +269,18 @@ static void TriggerNotificationBoost(void) {
 }
 %end
 
-// Cưỡng bức FPS hiển thị tầng QuartzCore của backboardd
+// Hook setter thay vì getter — renderer đọc setter
 %hook CADisplay
-- (CAFrameRateRange)preferredFrameRateRange {
+- (void)setPreferredFrameRateRange:(CAFrameRateRange)range {
     if (isAODMasterEnabled() && gIsAODActive) {
         if (gHasActiveNotification) {
-            // Khi có thông báo: Ép giữ 50 FPS
-            return CAFrameRateRangeMake(50.0f, 50.0f, 50.0f);
+            %orig(CAFrameRateRangeMake(50.0f, 50.0f, 50.0f));
+        } else {
+            %orig(CAFrameRateRangeMake(2.0f, 5.0f, 2.0f));
         }
-        // Ở trạng thái AOD tĩnh: Ép hạ xuống 2-5 FPS để tiết kiệm năng lượng
-        return CAFrameRateRangeMake(2.0f, 5.0f, 2.0f);
+        return;
     }
-    // Thoát AOD: Ngay lập tức trả quyền hoàn toàn cho OS quản lý
-    return %orig;
+    %orig(range);
 }
 %end
 
@@ -291,7 +288,7 @@ static void TriggerNotificationBoost(void) {
 
 
 //==============================================================
-// NHÓM 3: SPRINGBOARD (ĐIỀU PHỐI THÔNG BÁO & XUNG NHỊP NỀN)
+// NHÓM 3: SPRINGBOARD
 //==============================================================
 %group Group_SpringBoard
 
@@ -316,22 +313,12 @@ static void TriggerNotificationBoost(void) {
 }
 - (void)unlockUIFromSource:(int)source withOptions:(id)options {
     %orig;
-    // Mở khóa: Ngay lập tức tắt cờ AOD, giải phóng xung nhịp
     gIsAODActive = NO;
     gHasActiveNotification = NO;
 }
 %end
 
-// Bắt sự kiện thông báo xuất hiện (Notification Arrival) để kéo FPS lên 50
-%hook NCNotificationDispatcher
-- (void)postNotificationWithRequest:(id)request {
-    %orig;
-    if (gIsAODActive) {
-        TriggerNotificationBoost();
-    }
-}
-%end
-
+// Bắt thông báo — kiểm tra lớp tồn tại trước khi hook
 %hook SBNCNotificationDispatcher
 - (void)_postNotificationRequest:(id)request {
     %orig;
@@ -341,31 +328,18 @@ static void TriggerNotificationBoost(void) {
 }
 %end
 
-// Điều chỉnh độ sáng tối thiểu khi vào AOD
 %hook SBBacklightController
 - (void)animateBacklightToFactor:(float)factor duration:(double)duration source:(long long)source completion:(id)completion {
     if (isAODMasterEnabled()) {
         if (factor <= 0.05f) {
             gIsAODActive = YES;
-            factor = 0.015f; // Giữ độ sáng mờ tối thiểu
+            factor = 0.015f;
         } else {
-            // Khi sáng màn hình trở lại: Tắt AOD ngay lập tức
             gIsAODActive = NO;
             gHasActiveNotification = NO;
         }
     }
     %orig(factor, duration, source, completion);
-}
-%end
-
-// Ép hạ xung nhịp điều phối ứng dụng (App Suspension/QoS) nhưng giữ nguyên luồng mạng APNs
-%hook ProcessControl
-- (BOOL)hasBackgroundTasksSuspended {
-    if (gIsAODActive) {
-        // Cho phép các tác vụ nền duy trì mạng để đẩy thông báo
-        return NO;
-    }
-    return %orig;
 }
 %end
 
