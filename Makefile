@@ -12,8 +12,8 @@ AODREAL_CFLAGS = -fobjc-arc
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
+# BẮT BUỘC PHẢI CÓ 2 DÒNG NÀY ĐỂ BUILD PREFERENCE BUNDLE
 SUBPROJECTS += prefs
-
 include $(THEOS_MAKE_PATH)/aggregate.mk
 
 after-install::
