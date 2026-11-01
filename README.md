@@ -53,7 +53,7 @@
 | iPhone 8 / 8 Plus / X | 16.x | ✅ Hoạt động đầy đủ |
 | iPhone 11 trở lên | 16.0+ | ⚠️ Thử nghiệm (chưa kiểm chứng) |
 
-> **Lưu ý**: iPhone 6s/7Plus dừng ở iOS 16.7.x — không thể lên iOS 17/18. Các máy này không có engine AOD gốc trong iOS, nên tweak sẽ không có tác dụng.
+> **Lưu ý**: iPhone 6s/7Plus dừng ở iOS 15.8.x — không thể lên iOS 17/18. Các máy này không có engine AOD gốc trong iOS, nên tweak sẽ không có tác dụng.
 
 ---
 
