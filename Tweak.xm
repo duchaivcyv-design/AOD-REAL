@@ -3,6 +3,15 @@
 //==========================
 
 #import <UIKit/UIKit.h>
+#import <Foundation/Foundation.h>
+
+// Đọc trạng thái từ settings
+static BOOL isAODEnabled(void) {
+    NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:
+        @"/var/mobile/Library/Preferences/com.jb.aodreal.plist"];
+    if (!prefs) return YES; // mặc định bật
+    return [prefs[@"enabled"] boolValue];
+}
 
 // Khai báo các lớp private liên quan đến AOD
 @interface BLSBacklight : NSObject
