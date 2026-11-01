@@ -1,10 +1,10 @@
 #import <Preferences/PSListController.h>
 #import <spawn.h>
 
-@interface RealAODRootListController : PSListController
+@interface AODREALRootListController : PSListController
 @end
 
-@implementation RealAODRootListController
+@implementation AODREALRootListController
 
 - (NSArray *)specifiers {
     if (!_specifiers) {
