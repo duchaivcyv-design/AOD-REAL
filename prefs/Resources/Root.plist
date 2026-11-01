@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>items</key>
+    <array>
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>RealAOD Settings</string>
+            <key>footerText</key>
+            <string>Chỉ hoạt động trên iOS 16/18.0 (iPhone 8/XMS Max). iOS 15 không có engine AOD gốc.</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSwitchCell</string>
+            <key>label</key>
+            <string>Bật Always-On Display</string>
+            <key>defaults</key>
+            <string>com.jb.aodreal</string>
+            <key>key</key>
+            <string>enabled</string>
+            <key>default</key>
+            <false/>
+            <key>PostNotification</key>
+            <string>com.jb.aodreal/preferences.changed</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>Actions</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSButtonCell</string>
+            <key>label</key>
+            <string>Respring (áp dụng thay đổi)</string>
+            <key>action</key>
+            <string>respring</string>
+        </dict>
+    </array>
+</dict>
+</plist>
