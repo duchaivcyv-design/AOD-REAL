@@ -19,24 +19,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential fakeroot rsync curl git perl dpkg-dev bzip2 zstd unzip xz-utils sudo libxml2-dev
 
-      - name: Install Theos manually
+      - name: Install Theos via official script (patched)
         env:
           THEOS: ${{ github.workspace }}/theos
+          CI: 1
         run: |
           export THEOS="$THEOS"
-          # Clone Theos
-          git clone --recursive https://github.com/theos/theos.git "$THEOS"
-          
-          # Tải SDK trực tiếp (không qua api.github.com)
-          mkdir -p "$THEOS/sdks"
-          curl -LO https://github.com/theos/sdks/archive/master.zip
-          TMP=$(mktemp -d)
-          unzip -q master.zip -d "$TMP"
-          mv "$TMP"/sdks-master/*.sdk "$THEOS/sdks/"
-          rm -rf master.zip "$TMP"
-          
-          # Xác minh SDK
-          echo "=== SDKs installed ==="
+          # CI=1 tránh nhắc nhập mật khẩu; sed thay thế libxml2 bằng libxml2-dev để tương thích Ubuntu 26.04
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos | sed 's/ libxml2/ libxml2-dev/g')"
+          # Xác minh toolchain và SDK
+          echo "=== Toolchain check ==="
+          ls "$THEOS/toolchain/linux/iphone/bin/clang"
+          echo "=== SDKs check ==="
           ls "$THEOS/sdks/"
 
       - name: Build package
@@ -50,10 +44,8 @@ jobs:
         run: |
           mkdir -p public/debs
           
-          # Tìm mọi file .deb được sinh ra rồi copy vào public/debs
           find . -name "*.deb" ! -path "./public/*" -exec cp -v {} public/debs/ \;
           
-          # Kiểm tra nếu không có file .deb thì báo lỗi dừng workflow
           if [ -z "$(ls -A public/debs)" ]; then
              echo "Error: Không tìm thấy file .deb nào sau khi build!"
              exit 1
