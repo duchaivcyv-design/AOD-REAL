@@ -1,0 +1,9 @@
+{
+    entry = {
+        bundle = "RealAODPrefs";
+        cell = PSLinkCell;
+        detail = "RealAODRootListController";
+        icon = "icon.png";
+        label = "RealAOD";
+    };
+}
