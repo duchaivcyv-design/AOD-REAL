@@ -4,11 +4,11 @@ INSTALL_TARGET_PROCESSES = SpringBoard backboardd Preferences PosterBoard
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = RealAOD
-RealAOD_FILES = Tweak.xm
-RealAOD_FRAMEWORKS = UIKit Foundation QuartzCore
-RealAOD_PRIVATE_FRAMEWORKS = BacklightServices
-RealAOD_CFLAGS = -fobjc-arc
+TWEAK_NAME = AODREAL
+AODREAL_FILES = Tweak.xm
+AODREAL_FRAMEWORKS = UIKit Foundation QuartzCore
+AODREAL_PRIVATE_FRAMEWORKS = BacklightServices
+AODREAL_CFLAGS = -fobjc-arc
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
