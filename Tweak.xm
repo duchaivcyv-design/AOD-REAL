@@ -1271,7 +1271,7 @@ static id gCachedFlipbookSpec = nil;
     // 2. CHÈN DUY NHẤT CÔNG TẮC "Blur Wallpaper Photo" NẰM GIỮA HÌNH NỀN VÀ THÔNG BÁO
     BOOL hasBlur = NO;
     for (PSSpecifier *s in specs) {
-        if ([[s propertyForKey:@"id"] isEqualToString:kAODBlurID]) {
+        if ([[s propertyForKey:@"id"] isEqualToString:kBlurID]) {
             hasBlur = YES;
             break;
         }
