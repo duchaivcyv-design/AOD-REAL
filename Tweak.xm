@@ -90,6 +90,24 @@ static inline float getCustomAODRefreshRate(void) { return gCachedCustomHz; }
 static inline float getAODPanelBrightnessFactor(void) { return gCachedBrightnessFactor; }
 static inline float getCustomAODBrightnessFactor(void) { return gCachedBrightnessFactor; }
 
+// ĐẶT TẠI ĐÂY: Để Group_Backboardd, Group_SpringBoard và các Group phía dưới đều thấy hàm
+static inline BOOL shouldSuppressAODBySystemPolicies(void) {
+    UIDevice *device = [UIDevice currentDevice];
+    [device setBatteryMonitoringEnabled:YES];
+    if (device.batteryState != UIDeviceBatteryStateCharging && 
+        device.batteryState != UIDeviceBatteryStateFull) {
+        if (device.batteryLevel > 0.0f && device.batteryLevel <= 0.05f) {
+            return YES;
+        }
+    }
+
+    if ([[NSProcessInfo processInfo] isLowPowerModeEnabled]) {
+        return YES;
+    }
+
+    return NO;
+}
+
 //==============================================================
 // 1. KHAI BÁO CÁC LỚP VÀ GIAO DIỆN HỆ THỐNG
 //==============================================================
@@ -383,17 +401,34 @@ static inline float getCustomAODBrightnessFactor(void) { return gCachedBrightnes
 
 %group Group_Backboardd
 
-// BẢO VỆ NGUỒN ĐÈN NỀN PANEL (CHỈ CHO TẮT KHI CHE TIỆM CẬN HOẶC POLICY HỆ THỐNG YÊU CẦU)
+// BẢO VỆ NGUỒN ĐÈN NỀN PANEL (CHỐNG LẶP STATE VÀ DẬP TẮT KHI CẦN THIẾT)
 %hook CBController
+
 - (void)setPowerState:(BOOL)state completion:(id)completion {
-    if (isAODMasterEnabled() && !state) {
-        if (gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) {
-            %orig(YES, completion); // Bảo toàn nguồn đèn nền panel để nuôi AOD
-            return;
+    if (isAODMasterEnabled()) {
+        // 1. Trường hợp hệ thống yêu cầu dập nguồn màn hình (state == NO)
+        if (!state) {
+            // Nếu có policy ngắt (Pin yếu, Tiết kiệm pin, Sleep Focus) hoặc đang che cảm biến tiệm cận
+            if (gCurrentState == AODStateProximityOff || shouldSuppressAODBySystemPolicies()) {
+                %orig(NO, completion); // Cho phép dập nguồn tuyệt đối để bảo vệ pin và tắt đen màn hình
+                return;
+            }
+
+            // Nếu đang trong chu trình AOD: Giữ nguồn nuôi đèn nền nhưng hoàn tất completion an toàn
+            if (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning) {
+                %orig(YES, completion);
+                return;
+            }
+        } else {
+            // 2. Trường hợp đánh thức màn hình sáng trở lại (state == YES)
+            if (gCurrentState == AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) {
+                gCurrentState = AODStateActive;
+            }
         }
     }
     %orig(state, completion);
 }
+
 %end
 
 // ÉP HẠ XUNG NHỊP HZ/FPS PHẦN CỨNG & CHỐNG BLANK MÀN HÌNH
