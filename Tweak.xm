@@ -2,6 +2,7 @@
 #import <Foundation/Foundation.h>
 #import <QuartzCore/QuartzCore.h>
 #import <QuartzCore/CAFrameRateRange.h>
+#import <IOKit/IOKitLib.h>
 
 //==============================================================
 // KHAI BÁO GIAO THỨC & INTERFACE NỘI BỘ
@@ -36,21 +37,46 @@
 @end
 
 //==============================================================
-// BIẾN TOÀN CỤC
+// HÀM ĐỌC GIÁ TRỊ CẤU HÌNH TÙY BIẾN TỪ CÀI ĐẶT
 //==============================================================
-static BOOL gIsAODActive = NO;
-static BOOL gHasActiveNotification = NO;
-
 static BOOL isAODMasterEnabled(void) {
     Boolean valid = false;
     Boolean val = CFPreferencesGetAppBooleanValue(
         CFSTR("enabled"),
-        CFSTR("com.jb.aodreal"),   // ← sửa domain
+        CFSTR("com.jb.aodreal"),
         &valid
     );
     if (!valid) return NO;
     return (BOOL)val;
 }
+
+// Lấy tần số quét cài đặt (Mặc định 2 Hz, dải 2 - 20 Hz)
+static float getCustomAODRefreshRate(void) {
+    CFPropertyListRef val = CFPreferencesCopyAppValue(CFSTR("CustomAODRefreshRate"), CFSTR("com.jb.aodreal"));
+    if (val && CFGetTypeID(val) == CFNumberGetTypeID()) {
+        float rate = [(__bridge NSNumber *)val floatValue];
+        CFRelease(val);
+        if (rate >= 2.0f && rate <= 20.0f) return rate;
+    }
+    if (val) CFRelease(val);
+    return 2.0f;
+}
+
+// Lấy mức độ sáng AOD cài đặt (Dải 2 - 20, ánh xạ thành 0.002f - 0.020f)
+static float getCustomAODBrightnessFactor(void) {
+    CFPropertyListRef val = CFPreferencesCopyAppValue(CFSTR("CustomAODBrightness"), CFSTR("com.jb.aodreal"));
+    if (val && CFGetTypeID(val) == CFNumberGetTypeID()) {
+        float level = [(__bridge NSNumber *)val floatValue];
+        CFRelease(val);
+        if (level >= 2.0f && level <= 20.0f) return level / 1000.0f;
+    }
+    if (val) CFRelease(val);
+    return 0.005f; // Mặc định mức 5 (0.005f)
+}
+
+// Quản lý biến trạng thái
+static BOOL gIsAODActive = NO;
+static BOOL gHasActiveNotification = NO;
 
 static void TriggerNotificationBoost(void) {
     gHasActiveNotification = YES;
@@ -60,38 +86,26 @@ static void TriggerNotificationBoost(void) {
 }
 
 //==============================================================
-// NHÓM 1: GIAO DIỆN CÀI ĐẶT
+// TẦNG 1: GIAO DIỆN CÀI ĐẶT (BỔ SUNG THANH CHỈNH HZ & ĐỘ SÁNG)
 //==============================================================
 %group Group_Preferences
 
 %hook BLSBacklight
-+ (BOOL)isAlwaysOnEnabledByHardware {
-    return isAODMasterEnabled() ? YES : %orig;
-}
++ (BOOL)isAlwaysOnEnabledByHardware { return isAODMasterEnabled() ? YES : %orig; }
 %end
 
 %hook BLSAlwaysOnFrequencyConfiguration
-- (BOOL)isAlwaysOnEnabled {
-    return isAODMasterEnabled() ? YES : %orig;
-}
+- (BOOL)isAlwaysOnEnabled { return isAODMasterEnabled() ? YES : %orig; }
 %end
 
 %hook CBDisplayModule
-- (BOOL)isAlwaysOnDisplaySupported {
-    return isAODMasterEnabled() ? YES : %orig;
-}
+- (BOOL)isAlwaysOnDisplaySupported { return isAODMasterEnabled() ? YES : %orig; }
 %end
 
 %hook DBRDisplayController
-- (BOOL)shouldShowAlwaysOnDisplay {
-    return isAODMasterEnabled() ? YES : %orig;
-}
-- (BOOL)shouldShowAlwaysOnDisplaySpecifier {
-    return isAODMasterEnabled() ? YES : %orig;
-}
-- (BOOL)isAlwaysOnDisplaySupported {
-    return isAODMasterEnabled() ? YES : %orig;
-}
+- (BOOL)shouldShowAlwaysOnDisplay { return isAODMasterEnabled() ? YES : %orig; }
+- (BOOL)shouldShowAlwaysOnDisplaySpecifier { return isAODMasterEnabled() ? YES : %orig; }
+- (BOOL)isAlwaysOnDisplaySupported { return isAODMasterEnabled() ? YES : %orig; }
 
 - (id)specifiers {
     NSMutableArray *specs = %orig;
@@ -107,11 +121,7 @@ static void TriggerNotificationBoost(void) {
     }
     
     if (!exists) {
-        Class detailClass = NSClassFromString(@"DBRAlwaysOnDisplayDetailController");
-        if (!detailClass) {
-            detailClass = NSClassFromString(@"DBRAlwaysOnDisplayController");
-        }
-        
+        Class detailClass = NSClassFromString(@"DBRAlwaysOnDisplayDetailController") ?: NSClassFromString(@"DBRAlwaysOnDisplayController");
         PSSpecifier *aodSpec = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình luôn bật"
                                                                   target:self
                                                                      set:NULL
@@ -129,7 +139,6 @@ static void TriggerNotificationBoost(void) {
                 break;
             }
         }
-        
         if (insertIdx >= 0 && insertIdx <= specs.count) {
             [specs insertObject:aodSpec atIndex:insertIdx];
         } else {
@@ -141,54 +150,103 @@ static void TriggerNotificationBoost(void) {
 %end
 
 %hook DBRAlwaysOnDisplayDetailController
-- (BOOL)shouldShowAlwaysOnDisplaySpecifiers {
-    return isAODMasterEnabled() ? YES : %orig;
-}
-- (BOOL)isAlwaysOnDisplayEnabled {
-    return isAODMasterEnabled() ? YES : %orig;
+- (BOOL)shouldShowAlwaysOnDisplaySpecifiers { return isAODMasterEnabled() ? YES : %orig; }
+- (BOOL)isAlwaysOnDisplayEnabled { return isAODMasterEnabled() ? YES : %orig; }
+
+// Bổ sung các specifier tùy chỉnh Hz và Độ sáng vào trang con AOD
+- (id)specifiers {
+    NSMutableArray *specs = %orig;
+    static NSString *const kAODHzID = @"AOD_CUSTOM_HZ_KEY";
+    
+    BOOL exists = NO;
+    for (PSSpecifier *s in specs) {
+        if ([[s propertyForKey:@"id"] isEqualToString:kAODHzID]) {
+            exists = YES;
+            break;
+        }
+    }
+    
+    if (!exists) {
+        // Nhóm cấu hình xung nhịp & độ sáng
+        PSSpecifier *group = [%c(PSSpecifier) preferenceSpecifierNamed:@"GIỚI HẠN PHẦN CỨNG AOD (2-20)"
+                                                               target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
+        [group setProperty:@"Ép phần cứng hạ tần số quét và độ sáng xuống tầng thấp nhất khi khóa màn hình." forKey:@"footerText"];
+        
+        // Thanh trượt tần số quét (2 - 20 Hz)
+        PSSpecifier *hzSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Tần số quét (2-20 Hz)"
+                                                                   target:self
+                                                                      set:@selector(setCustomHz:spec:)
+                                                                      get:@selector(getCustomHz:)
+                                                                   detail:Nil cell:5 edit:Nil]; // 5: PSSliderCell
+        [hzSlider setProperty:kAODHzID forKey:@"id"];
+        [hzSlider setProperty:@(2.0f) forKey:@"min"];
+        [hzSlider setProperty:@(20.0f) forKey:@"max"];
+        [hzSlider setProperty:@YES forKey:@"showValue"];
+        
+        // Thanh trượt độ sáng cực thấp (2 - 20)
+        PSSpecifier *brightSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Độ sáng AOD (Mức 2-20)"
+                                                                       target:self
+                                                                          set:@selector(setCustomBrightness:spec:)
+                                                                          get:@selector(getCustomBrightness:)
+                                                                       detail:Nil cell:5 edit:Nil];
+        [brightSlider setProperty:@"AOD_CUSTOM_BRIGHTNESS_KEY" forKey:@"id"];
+        [brightSlider setProperty:@(2.0f) forKey:@"min"];
+        [brightSlider setProperty:@(20.0f) forKey:@"max"];
+        [brightSlider setProperty:@YES forKey:@"showValue"];
+        
+        [specs addObject:group];
+        [specs addObject:hzSlider];
+        [specs addObject:brightSlider];
+    }
+    return specs;
 }
 
-- (id)alwaysOnDisplayEnabled:(PSSpecifier *)specifier {
-    return @(isAODMasterEnabled());
+%new
+- (void)setCustomHz:(id)value spec:(PSSpecifier *)spec {
+    CFPreferencesSetAppValue(CFSTR("CustomAODRefreshRate"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
+    CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
 }
 
+%new
+- (id)getCustomHz:(PSSpecifier *)spec {
+    return @(getCustomAODRefreshRate());
+}
+
+%new
+- (void)setCustomBrightness:(id)value spec:(PSSpecifier *)spec {
+    CFPreferencesSetAppValue(CFSTR("CustomAODBrightness"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
+    CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
+}
+
+%new
+- (id)getCustomBrightness:(PSSpecifier *)spec {
+    return @(getCustomAODBrightnessFactor() * 1000.0f);
+}
+
+- (id)alwaysOnDisplayEnabled:(PSSpecifier *)specifier { return @(isAODMasterEnabled()); }
 - (void)setAlwaysOnDisplayEnabled:(id)value specifier:(PSSpecifier *)specifier {
-    CFPreferencesSetAppValue(CFSTR("AlwaysOnDisplayEnabled"),
-        (__bridge CFPropertyListRef)(value),
-        CFSTR("com.apple.BacklightServices"));
+    CFPreferencesSetAppValue(CFSTR("AlwaysOnDisplayEnabled"), (__bridge CFPropertyListRef)(value), CFSTR("com.apple.BacklightServices"));
     CFPreferencesAppSynchronize(CFSTR("com.apple.BacklightServices"));
-    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
-        CFSTR("com.apple.BacklightServices.AlwaysOnDisplayEnabled.changed"),
-        NULL, NULL, YES);
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.apple.BacklightServices.AlwaysOnDisplayEnabled.changed"), NULL, NULL, YES);
 }
 
 - (id)showWallpaperEnabled:(PSSpecifier *)specifier {
     Boolean valid = false;
-    Boolean val = CFPreferencesGetAppBooleanValue(
-        CFSTR("ShowWallpaperInAlwaysOn"),
-        CFSTR("com.apple.BacklightServices"), &valid);
+    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("ShowWallpaperInAlwaysOn"), CFSTR("com.apple.BacklightServices"), &valid);
     return valid ? @(val) : @YES;
 }
-
 - (void)setShowWallpaperEnabled:(id)value specifier:(PSSpecifier *)specifier {
-    CFPreferencesSetAppValue(CFSTR("ShowWallpaperInAlwaysOn"),
-        (__bridge CFPropertyListRef)(value),
-        CFSTR("com.apple.BacklightServices"));
+    CFPreferencesSetAppValue(CFSTR("ShowWallpaperInAlwaysOn"), (__bridge CFPropertyListRef)(value), CFSTR("com.apple.BacklightServices"));
     CFPreferencesAppSynchronize(CFSTR("com.apple.BacklightServices"));
 }
 
 - (id)showNotificationsEnabled:(PSSpecifier *)specifier {
     Boolean valid = false;
-    Boolean val = CFPreferencesGetAppBooleanValue(
-        CFSTR("ShowNotificationsInAlwaysOn"),
-        CFSTR("com.apple.BacklightServices"), &valid);
+    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("ShowNotificationsInAlwaysOn"), CFSTR("com.apple.BacklightServices"), &valid);
     return valid ? @(val) : @YES;
 }
-
 - (void)setShowNotificationsEnabled:(id)value specifier:(PSSpecifier *)specifier {
-    CFPreferencesSetAppValue(CFSTR("ShowNotificationsInAlwaysOn"),
-        (__bridge CFPropertyListRef)(value),
-        CFSTR("com.apple.BacklightServices"));
+    CFPreferencesSetAppValue(CFSTR("ShowNotificationsInAlwaysOn"), (__bridge CFPropertyListRef)(value), CFSTR("com.apple.BacklightServices"));
     CFPreferencesAppSynchronize(CFSTR("com.apple.BacklightServices"));
 }
 %end
@@ -197,14 +255,26 @@ static void TriggerNotificationBoost(void) {
 
 
 //==============================================================
-// NHÓM 2: BACKBOARDD
+// TẦNG 2 & 3: BACKBOARDD, IOKIT VÀ QUARTZCORE (KHỐNG CHẾ HZ/FPS)
 //==============================================================
 %group Group_Backboardd
 
-%hook BKDisplayRenderOverlay
-- (BOOL)disablesDisplayBlanking {
-    return isAODMasterEnabled() ? YES : %orig;
+// Tầng 2: Can thiệp IOKit cưỡng bức Display Driver nhận diện tần số thấp
+%hookf(kern_return_t, IORegistryEntryCreateCFProperties, io_registry_entry_t entry, CFMutableDictionaryRef *properties, CFAllocatorRef allocator, uint32_t options) {
+    kern_return_t ret = %orig(entry, properties, allocator, options);
+    if (ret == KERN_SUCCESS && properties && *properties && isAODMasterEnabled()) {
+        int customRate = (int)getCustomAODRefreshRate();
+        CFNumberRef rateNum = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &customRate);
+        CFDictionarySetValue(*properties, CFSTR("supports-aod"), kCFBooleanTrue);
+        CFDictionarySetValue(*properties, CFSTR("supports-variable-refresh-rate"), kCFBooleanTrue);
+        CFDictionarySetValue(*properties, CFSTR("timing-sample-rate"), rateNum);
+        CFRelease(rateNum);
+    }
+    return ret;
 }
+
+%hook BKDisplayRenderOverlay
+- (BOOL)disablesDisplayBlanking { return isAODMasterEnabled() ? YES : %orig; }
 %end
 
 %hook BKDisplayManager
@@ -230,9 +300,7 @@ static void TriggerNotificationBoost(void) {
     }
     return state;
 }
-- (BOOL)isAlwaysOnSuppressed {
-    return isAODMasterEnabled() ? NO : %orig;
-}
+- (BOOL)isAlwaysOnSuppressed { return isAODMasterEnabled() ? NO : %orig; }
 %end
 
 %hook BLSHAlwaysOnPresentationEngine
@@ -269,14 +337,27 @@ static void TriggerNotificationBoost(void) {
 }
 %end
 
-// Hook setter thay vì getter — renderer đọc setter
+// Tầng 3: Ép CADisplay khống chế chính xác Hz theo cài đặt người dùng
 %hook CADisplay
+- (CAFrameRateRange)preferredFrameRateRange {
+    if (isAODMasterEnabled() && gIsAODActive) {
+        if (gHasActiveNotification) {
+            // Khi có thông báo: Tăng tức thì lên 50 Hz để chạy hiệu ứng mượt
+            return CAFrameRateRangeMake(50.0f, 50.0f, 50.0f);
+        }
+        float targetHz = getCustomAODRefreshRate();
+        return CAFrameRateRangeMake(targetHz, targetHz, targetHz);
+    }
+    return %orig;
+}
+
 - (void)setPreferredFrameRateRange:(CAFrameRateRange)range {
     if (isAODMasterEnabled() && gIsAODActive) {
         if (gHasActiveNotification) {
             %orig(CAFrameRateRangeMake(50.0f, 50.0f, 50.0f));
         } else {
-            %orig(CAFrameRateRangeMake(2.0f, 5.0f, 2.0f));
+            float targetHz = getCustomAODRefreshRate();
+            %orig(CAFrameRateRangeMake(targetHz, targetHz, targetHz));
         }
         return;
     }
@@ -288,23 +369,17 @@ static void TriggerNotificationBoost(void) {
 
 
 //==============================================================
-// NHÓM 3: SPRINGBOARD
+// TẦNG 4: SPRINGBOARD (ĐIỀU KHIỂN ĐỘ SÁNG CỰC TIỂU & BẮT THÔNG BÁO)
 //==============================================================
 %group Group_SpringBoard
 
 %hook CSCoverSheetViewController
-- (BOOL)isAlwaysOnPresentation {
-    return isAODMasterEnabled() ? YES : %orig;
-}
-- (BOOL)shouldDimForAlwaysOn {
-    return isAODMasterEnabled() ? YES : %orig;
-}
+- (BOOL)isAlwaysOnPresentation { return isAODMasterEnabled() ? YES : %orig; }
+- (BOOL)shouldDimForAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
 %end
 
 %hook SBLockScreenManager
-- (BOOL)shouldPreventBacklightBlankingForAlwaysOn {
-    return isAODMasterEnabled() ? YES : %orig;
-}
+- (BOOL)shouldPreventBacklightBlankingForAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
 - (void)lockUIFromSource:(int)source withOptions:(id)options {
     %orig;
     if (isAODMasterEnabled()) {
@@ -318,7 +393,6 @@ static void TriggerNotificationBoost(void) {
 }
 %end
 
-// Bắt thông báo — kiểm tra lớp tồn tại trước khi hook
 %hook SBNCNotificationDispatcher
 - (void)_postNotificationRequest:(id)request {
     %orig;
@@ -328,12 +402,14 @@ static void TriggerNotificationBoost(void) {
 }
 %end
 
+// Cưỡng bức hạ độ sáng màn hình theo thanh trượt cài đặt
 %hook SBBacklightController
 - (void)animateBacklightToFactor:(float)factor duration:(double)duration source:(long long)source completion:(id)completion {
     if (isAODMasterEnabled()) {
         if (factor <= 0.05f) {
             gIsAODActive = YES;
-            factor = 0.015f;
+            // Áp dụng mức sáng siêu thấp tùy chọn (0.002f - 0.020f)
+            factor = getCustomAODBrightnessFactor();
         } else {
             gIsAODActive = NO;
             gHasActiveNotification = NO;
@@ -347,17 +423,13 @@ static void TriggerNotificationBoost(void) {
 
 
 //==============================================================
-// NHÓM 4: POSTERBOARD
+// TẦNG 5: POSTERBOARD (RENDER LAYER)
 //==============================================================
 %group Group_PosterBoard
 
 %hook PRRenderingBacklightEnvironment
-- (BOOL)supportsAlwaysOn {
-    return isAODMasterEnabled() ? YES : %orig;
-}
-- (BOOL)isAlwaysOnActive {
-    return isAODMasterEnabled() ? YES : %orig;
-}
+- (BOOL)supportsAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
+- (BOOL)isAlwaysOnActive { return isAODMasterEnabled() ? YES : %orig; }
 %end
 
 %hook PRPosterEnvironmentImpl
@@ -371,7 +443,7 @@ static void TriggerNotificationBoost(void) {
 
 
 //==============================================================
-// CONSTRUCTOR
+// CONSTRUCTOR: NẠP ĐÚNG TIẾN TRÌNH
 //==============================================================
 %ctor {
     @autoreleasepool {
