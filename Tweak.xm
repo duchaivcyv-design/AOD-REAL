@@ -62,7 +62,7 @@ static inline BOOL isNotificationsEnabled(void) {
 }
 
 //==============================================================
-// 1. KHAI BÁO CÁC LỚP HỆ THỐNG
+// 1. KHAI BÁO ĐẦY ĐỦ CÁC LỚP HỆ THỐNG (THEOS BUILD HOÀN CHỈNH)
 //==============================================================
 
 @interface PSSpecifier : NSObject
@@ -75,6 +75,7 @@ static inline BOOL isNotificationsEnabled(void) {
 - (NSMutableArray *)specifiers;
 - (void)insertSpecifier:(PSSpecifier *)specifier atIndex:(NSInteger)index animated:(BOOL)animated;
 - (void)addSpecifier:(PSSpecifier *)specifier animated:(BOOL)animated;
+- (NSInteger)indexOfSpecifier:(PSSpecifier *)specifier;
 @end
 
 @interface DBSAlwaysOnViewController : PSListController
@@ -82,9 +83,17 @@ static inline BOOL isNotificationsEnabled(void) {
 - (void)setAlwaysOnDisplayEnabled:(id)value specifier:(PSSpecifier *)specifier;
 @end
 
+@interface BLSHFlipbookSpecification : NSObject
+- (double)framesPerSecond;
+- (id)initWithSoftMemoryLimit:(unsigned long long)arg1 frameCapacity:(unsigned long long)arg2 framesPerSecond:(double)fps minimumGapDuration:(double)arg4 coaelscingEpsilon:(double)arg5 minimumPrepareInterval:(double)arg6 maximumRenderInterval:(double)arg7;
+- (id)initWithFrameCapacity:(unsigned long long)arg1 framesPerSecond:(double)fps minimumGapDuration:(double)arg3 coaelscingEpsilon:(double)arg4 minimumPrepareInterval:(double)arg5 maximumRenderInterval:(double)arg6;
+@end
+
 @interface SBBacklightPlatformProvider : NSObject
 - (BOOL)deviceSupportsAlwaysOn;
 - (BOOL)isAlwaysOnEnabled;
+- (id)flipbookSpecification;
+- (id)sessionProvider;
 - (BOOL)isShowingBlankingWindow;
 - (void)showBlankingWindow:(BOOL)show withFadeDuration:(double)duration;
 - (void)_setBlankingWindowVisible:(BOOL)visible fadeDuration:(double)duration;
@@ -125,10 +134,6 @@ static inline BOOL isNotificationsEnabled(void) {
 - (BOOL)isAlwaysOnEnabled;
 @end
 
-@interface BLSHFlipbookSpecification : NSObject
-- (double)framesPerSecond;
-@end
-
 @interface CAWindowServerDisplay : NSObject
 - (id)currentMode;
 - (void)setRefreshRate:(float)rate;
@@ -153,6 +158,8 @@ static inline BOOL isNotificationsEnabled(void) {
 + (instancetype)sharedInstance;
 - (BOOL)isLockScreenActive;
 - (BOOL)shouldPreventBacklightBlankingForAlwaysOn;
+- (void)lockUIFromSource:(int)source withOptions:(id)options;
+- (void)unlockUIFromSource:(int)source withOptions:(id)options;
 @end
 
 @interface SBBacklightController : NSObject
@@ -173,6 +180,10 @@ static inline BOOL isNotificationsEnabled(void) {
 - (void)setSuppressed:(BOOL)suppressed;
 - (BOOL)isUsingPseudoFlipbook;
 - (BOOL)alwaysFillFlipbook;
+- (void)createFlipbook;
+- (void)startFlipbookAndEnsureCurrent;
+- (id)frameOnGlassNow;
+- (void)startLiveUpdates;
 @end
 
 @interface BLSHBacklightSceneHostEnvironment : NSObject
@@ -185,7 +196,6 @@ static inline BOOL isNotificationsEnabled(void) {
 @interface SBFLockScreenDateViewController : UIViewController
 @end
 
-// Thêm khai báo các class Backboard & Driver
 @interface BKDisplayRenderOverlay : NSObject
 - (BOOL)disablesDisplayBlanking;
 @end
@@ -194,7 +204,6 @@ static inline BOOL isNotificationsEnabled(void) {
 - (void)setBlanked:(BOOL)blanked withReason:(id)reason;
 @end
 
-// Thêm khai báo các class PosterBoard
 @interface PRRenderingBacklightEnvironment : NSObject
 - (BOOL)supportsAlwaysOn;
 - (BOOL)isAlwaysOnActive;
@@ -204,7 +213,6 @@ static inline BOOL isNotificationsEnabled(void) {
 - (long long)backlightLuminance;
 @end
 
-// Thêm khai báo các class Preferences / CoreBrightness / BacklightServices
 @interface BLSBacklight : NSObject
 + (BOOL)isAlwaysOnEnabledByHardware;
 @end
@@ -217,19 +225,6 @@ static inline BOOL isNotificationsEnabled(void) {
 + (BOOL)isAlwaysOnDisplaySupported;
 @end
 
-// Bổ sung method cho SBLockScreenManager (nếu cần gọi tường minh)
-@interface SBLockScreenManager (AODExtension)
-- (void)lockUIFromSource:(int)source withOptions:(id)options;
-- (void)unlockUIFromSource:(int)source withOptions:(id)options;
-@end
-
-// Macro ghi log gọn nhẹ để debug nếu cần
-#ifdef DEBUG
-  #define AODLog(fmt, ...) NSLog((@"[AODReal] " fmt), ##__VA_ARGS__)
-#else
-  #define AODLog(...)
-#endif
-
 //==============================================================
 // 2. TẦNG BACKBOARDD & DRIVER PHẦN CỨNG
 //==============================================================
@@ -240,12 +235,11 @@ static inline BOOL isNotificationsEnabled(void) {
 - (BOOL)disablesDisplayBlanking { return isAODMasterEnabled() ? YES : %orig; }
 %end
 
-// FIX QUAN TRỌNG: Chặn dập tắt màn hình nếu AOD Master đang bật và không bị che tiệm cận
+// Chặn dập tắt tín hiệu màn hình khi khóa máy
 %hook BKDisplayManager
 - (void)setBlanked:(BOOL)blanked withReason:(id)reason {
     if (isAODMasterEnabled() && blanked) {
         if (gCurrentState != AODStateProximityOff) {
-            // Không cho phép driver dập tắt tín hiệu màn hình
             %orig(NO, reason);
             return;
         }
@@ -268,7 +262,6 @@ static inline BOOL isNotificationsEnabled(void) {
 
 - (long long)backlightState {
     long long state = %orig;
-    // Bắt đầu chu trình tắt màn hình -> Ép giữ State 2 (AOD)
     if (isAODMasterEnabled() && state == 0) {
         if (gCurrentState != AODStateProximityOff) {
             gCurrentState = AODStateActive;
@@ -312,11 +305,13 @@ static inline BOOL isNotificationsEnabled(void) {
 }
 %end
 
+// Ép Presentation Engine tự động tạo và duy trì Flipbook
 %hook BLSHAlwaysOnPresentationEngine
 - (BOOL)isSuppressed {
     if (isAODMasterEnabled()) return (gCurrentState == AODStateProximityOff) ? YES : %orig;
     return %orig;
 }
+
 - (void)setSuppressed:(BOOL)suppressed {
     if (isAODMasterEnabled() && gCurrentState != AODStateProximityOff && suppressed) {
         %orig(NO);
@@ -324,8 +319,16 @@ static inline BOOL isNotificationsEnabled(void) {
     }
     %orig(suppressed);
 }
+
 - (BOOL)isUsingPseudoFlipbook { return isAODMasterEnabled() ? YES : %orig; }
 - (BOOL)alwaysFillFlipbook { return isAODMasterEnabled() ? YES : %orig; }
+
+- (void)startLiveUpdates {
+    %orig;
+    if (isAODMasterEnabled()) {
+        [self startFlipbookAndEnsureCurrent];
+    }
+}
 %end
 
 %hook BLSHBacklightSceneHostEnvironment
@@ -342,16 +345,40 @@ static inline BOOL isNotificationsEnabled(void) {
 %end // Group_Backboardd
 
 //==============================================================
-// 3. TẦNG SPRINGBOARD: KÍCH HOẠT SỚM NGAY LÚC BẤM NÚT NGUỒN
+// 3. TẦNG SPRINGBOARD: KÍCH HOẠT SỚM VÀ CẤP PHÁT FLIPBOOK SPEC
 //==============================================================
 
 %group Group_SpringBoard
+
+static BLSHFlipbookSpecification *gCachedFlipbookSpec = nil;
 
 %hook SBBacklightPlatformProvider
 - (BOOL)deviceSupportsAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
 - (BOOL)isAlwaysOnEnabled { return isAODMasterEnabled() ? YES : %orig; }
 
-// Chặn cửa sổ đen che màn hình khi AOD được bật
+// Cung cấp Specification chuẩn cho thiết bị không có AOD gốc
+- (id)flipbookSpecification {
+    id orig = %orig;
+    if (orig) return orig;
+    
+    if (isAODMasterEnabled()) {
+        if (!gCachedFlipbookSpec) {
+            Class specClass = NSClassFromString(@"BLSHFlipbookSpecification");
+            if (specClass) {
+                gCachedFlipbookSpec = [[specClass alloc] initWithSoftMemoryLimit:52428800
+                                                                   frameCapacity:120
+                                                                 framesPerSecond:(double)getCustomAODRefreshRate()
+                                                              minimumGapDuration:0.0
+                                                               coaelscingEpsilon:0.1
+                                                          minimumPrepareInterval:0.05
+                                                           maximumRenderInterval:0.25];
+            }
+        }
+        return gCachedFlipbookSpec;
+    }
+    return nil;
+}
+
 - (BOOL)isShowingBlankingWindow {
     if (isAODMasterEnabled() && gCurrentState != AODStateProximityOff) return NO;
     return %orig;
@@ -359,7 +386,7 @@ static inline BOOL isNotificationsEnabled(void) {
 
 - (void)showBlankingWindow:(BOOL)show withFadeDuration:(double)duration {
     if (isAODMasterEnabled() && show) {
-        if (gCurrentState != AODStateProximityOff) return; // Chặn dập đen
+        if (gCurrentState != AODStateProximityOff) return;
     }
     %orig(show, duration);
 }
@@ -377,7 +404,6 @@ static inline BOOL isNotificationsEnabled(void) {
 }
 %end
 
-// Vô hiệu hóa toàn bộ Coordinator & Policy hạn chế
 %hook SBAlwaysOnPolicyCoordinator
 - (NSSet *)activePolicies { return isAODMasterEnabled() ? [NSSet set] : %orig; }
 - (void)_activatePolicy:(id)policy {
@@ -424,10 +450,10 @@ static inline BOOL isNotificationsEnabled(void) {
     return (isAODMasterEnabled() && gCurrentState != AODStateProximityOff) ? YES : %orig; 
 }
 
-// BẮT SỚM: Bấm nút nguồn lập tức chuyển gCurrentState sang Active
+// Bắt sự kiện bấm nút nguồn để bật cờ Active tức thời
 - (void)lockUIFromSource:(int)source withOptions:(id)options {
     if (isAODMasterEnabled()) {
-        gCurrentState = AODStateActive; // Đổi cờ NGAY LẬP TỨC
+        gCurrentState = AODStateActive;
     }
     %orig;
     if (isAODMasterEnabled()) {
@@ -447,7 +473,7 @@ static inline BOOL isNotificationsEnabled(void) {
 }
 %end
 
-// Chống ám màn hình: Quỹ đạo vi mô vô hình
+// Chống ám màn hình: Quỹ đạo vi mô vô hình (0.35px)
 %hook SBFLockScreenDateViewController
 - (void)updateTimeNow {
     %orig;
@@ -471,7 +497,6 @@ static inline BOOL isNotificationsEnabled(void) {
 }
 %end
 
-// Giữ sáng mờ thay vì dập tắt khi factor <= 0.05f
 %hook SBBacklightController
 - (void)animateBacklightToFactor:(float)factor duration:(double)duration source:(long long)source completion:(id)completion {
     if (isAODMasterEnabled()) {
@@ -651,7 +676,7 @@ static void AODInjectIntoList(PSListController *list) {
 %end // Group_Preferences
 
 //==============================================================
-// 6. KHỞI TẠO & LẮNG NGHE CẢM BIẾN TIỆM CẬN
+// 6. KHỞI TẠO & CẢM BIẾN TIỆM CẬN
 //==============================================================
 
 static void ProximityStateDidChange(NSNotification *notification) {
