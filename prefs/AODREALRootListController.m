@@ -1,9 +1,11 @@
-#import <Preferences/PSListController.h>
+#import "AODREALRootListController.h"
 #import <spawn.h>
 #import <signal.h>
+#import <sys/wait.h>
+#import <unistd.h>
 
-@interface AODREALRootListController : PSListController
-@end
+// Khai báo hàm respring của FrontBoardServices (private)
+extern void FBSSystemServiceRespring(void);
 
 @implementation AODREALRootListController
 
@@ -18,33 +20,50 @@
 }
 
 - (void)respring {
-    // 1. Thử gửi tín hiệu respring thông qua killall (Hỗ trợ cả rootless và rootful)
+    // Cách 1: Thử dùng FBSSystemService (API private, an toàn nhất, không cần file system)
+    Class fbssClass = NSClassFromString(@"FBSSystemService");
+    if (fbssClass && [fbssClass respondsToSelector:@selector(sharedService)]) {
+        id service = [fbssClass performSelector:@selector(sharedService)];
+        SEL respringSel = NSSelectorFromString(@"openURL:withOptions:");
+        NSURL *url = [NSURL URLWithString:@"prefs:root="];
+        if (service && [service respondsToSelector:respringSel] && url) {
+            #pragma clang diagnostic push
+            #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+            [service performSelector:respringSel withObject:url withObject:@{}];
+            #pragma clang diagnostic pop
+            return;
+        }
+    }
+
+    // Cách 2: Dùng posix_spawn với killall (hỗ trợ rootless/rootful)
     pid_t pid;
     const char *args[] = {"killall", "-9", "SpringBoard", NULL};
-    
-    // Kiểm tra đường dẫn killall của Rootless trước, sau đó fallback về standard path
     const char *paths[] = {
         "/var/jb/usr/bin/killall",
         "/usr/bin/killall",
         "/var/jb/bin/killall",
         "/bin/killall"
     };
-    
-    int spawned = -1;
+
     for (int i = 0; i < 4; i++) {
         if (access(paths[i], X_OK) == 0) {
-            spawned = posix_spawn(&pid, paths[i], NULL, NULL, (char *const *)args, NULL);
-            if (spawned == 0) {
+            int ret = posix_spawn(&pid, paths[i], NULL, NULL,
+                                  (char *const *)args, NULL);
+            if (ret == 0) {
                 int status;
                 waitpid(pid, &status, 0);
                 return;
             }
         }
     }
-    
-    // 2. Fallback an toàn: Respring qua lệnh hệ thống của FrontBoard/SpringBoardServices
-    // TUYỆT ĐỐI KHÔNG kill(1, SIGKILL) vì sẽ gây Panic / sập nguồn máy
-    system("killall -9 SpringBoard");
+
+    // Cách 3: Fallback cuối — gửi Darwin notification để SpringBoard tự respring
+    // (một số tweak respring dùng cách này)
+    CFNotificationCenterPostNotification(
+        CFNotificationCenterGetDarwinNotifyCenter(),
+        CFSTR("com.apple.springboard.respring"),
+        NULL, NULL, YES
+    );
 }
 
 @end
