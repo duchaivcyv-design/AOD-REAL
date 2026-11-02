@@ -11,7 +11,7 @@
             <key>label</key>
             <string>Cấu hình tổng</string>
             <key>footerText</key>
-            <string>Ép kích hoạt Always-On Display gốc và nạp chuỗi điều phối xung nhịp tầng sâu.</string>
+            <string>Kích hoạt Always-On Display gốc và nạp chuỗi điều phối xung nhịp tầng sâu.</string>
         </dict>
         <dict>
             <key>cell</key>
@@ -33,9 +33,9 @@
             <key>cell</key>
             <string>PSGroupCell</string>
             <key>label</key>
-            <string>Tần số quét AOD tĩnh (2 - 20 Hz)</string>
+            <string>Tần số quét AOD tĩnh (2 - 30 Hz)</string>
             <key>footerText</key>
-            <string>Khóa khung hình render ở mức cực thấp khi màn hình khóa tĩnh. Khi có thông báo đến, xung nhịp tự động bung lên 50 Hz trong 3.5 giây rồi hạ về mức này.</string>
+            <string>Khóa khung hình render ở mức cực thấp khi màn hình khóa tĩnh. Khi có tương tác hoặc chạm, xung nhịp tự phục hồi mượt mà.</string>
         </dict>
         <dict>
             <key>cell</key>
@@ -47,7 +47,7 @@
             <key>min</key>
             <real>2.0</real>
             <key>max</key>
-            <real>20.0</real>
+            <real>30.0</real>
             <key>default</key>
             <real>2.0</real>
             <key>showValue</key>
@@ -55,7 +55,7 @@
             <key>isSegmented</key>
             <true/>
             <key>segmentCount</key>
-            <integer>18</integer>
+            <integer>28</integer>
             <key>PostNotification</key>
             <string>com.jb.aodreal/preferences.changed</string>
         </dict>
@@ -65,9 +65,9 @@
             <key>cell</key>
             <string>PSGroupCell</string>
             <key>label</key>
-            <string>Độ sáng nền AOD (Mức 2 - 20)</string>
+            <string>Độ sáng nền AOD (Mức 1 - 30)</string>
             <key>footerText</key>
-            <string>Mức 2 tương đương ~0.2% độ sáng phần cứng (rất tối trong bóng đêm). Mức 20 tương đương ~2.0% độ sáng.</string>
+            <string>Mức 1 tương đương độ sáng panel tối thiểu (~0.1%). Mức 30 tương đương ~3.0% độ sáng.</string>
         </dict>
         <dict>
             <key>cell</key>
@@ -77,17 +77,17 @@
             <key>key</key>
             <string>CustomAODBrightness</string>
             <key>min</key>
-            <real>2.0</real>
+            <real>1.0</real>
             <key>max</key>
-            <real>20.0</real>
+            <real>30.0</real>
             <key>default</key>
-            <real>5.0</real>
+            <real>8.0</real>
             <key>showValue</key>
             <true/>
             <key>isSegmented</key>
             <true/>
             <key>segmentCount</key>
-            <integer>18</integer>
+            <integer>29</integer>
             <key>PostNotification</key>
             <string>com.jb.aodreal/preferences.changed</string>
         </dict>
@@ -98,6 +98,8 @@
             <string>PSGroupCell</string>
             <key>label</key>
             <string>Hành động</string>
+            <key>footerText</key>
+            <string>Khởi động lại SpringBoard để làm mới toàn bộ bộ nhớ đệm nếu cần.</string>
         </dict>
         <dict>
             <key>cell</key>
