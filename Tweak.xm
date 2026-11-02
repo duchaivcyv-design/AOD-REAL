@@ -26,7 +26,7 @@ static void AODLog(NSString *format, ...) {
 }
 
 //==============================================================
-// 0. KHAI BÁO GIAO THỨC VÀ INTERFACE THEO ĐÚNG SYMBOL ĐÃ DUMP
+// 0. KHAI BÁO GIAO THỨC VÀ INTERFACE NỘI BỘ
 //==============================================================
 
 @interface PSSpecifier : NSObject
@@ -43,13 +43,11 @@ static void AODLog(NSString *format, ...) {
 
 @interface PSListController : UIViewController
 - (NSMutableArray *)specifiers;
-- (void)reloadSpecifiers;
 - (void)insertSpecifier:(PSSpecifier *)specifier atIndex:(NSInteger)index animated:(BOOL)animated;
 - (void)addSpecifier:(PSSpecifier *)specifier animated:(BOOL)animated;
 - (NSInteger)indexOfSpecifier:(PSSpecifier *)specifier;
 @end
 
-// Class AOD gốc của Apple trích xuất từ dyld_shared_cache
 @interface DBSAlwaysOnViewController : PSListController
 - (PSSpecifier *)_alwaysOnDisplaySpecifier;
 - (PSSpecifier *)_showWallpaperSpecifier;
@@ -63,14 +61,10 @@ static void AODLog(NSString *format, ...) {
 - (BOOL)supportsVariableRefreshRate;
 - (BOOL)supportsLowPowerRefreshRate;
 - (BOOL)supportsArbitraryFrameRates;
-- (id)modeWithName:(id)arg1;
 - (void)setRefreshRate:(float)rate;
 - (float)refreshRate;
-- (void)setAllowsVirtualModes:(BOOL)allows;
 - (void)setLowPowerRefreshRate:(float)arg1;
 - (float)lowPowerRefreshRate;
-- (void)setFrameInterval:(NSInteger)interval;
-- (NSInteger)frameInterval;
 @end
 
 @interface CADisplay : NSObject
@@ -78,7 +72,6 @@ static void AODLog(NSString *format, ...) {
 - (void)setPreferredFrameRateRange:(CAFrameRateRange)range;
 - (void)setFrameRateRange:(CAFrameRateRange)range;
 - (BOOL)supportsArbitraryFrameRates;
-- (void)setAllowsVirtualModes:(BOOL)arg1;
 @end
 
 @interface CSCoverSheetViewController : UIViewController
@@ -91,19 +84,14 @@ static void AODLog(NSString *format, ...) {
 + (instancetype)sharedInstance;
 - (BOOL)isLockScreenActive;
 - (BOOL)shouldPreventBacklightBlankingForAlwaysOn;
-- (void)lockUIFromSource:(int)source withOptions:(id)options;
-- (void)unlockUIFromSource:(int)source withOptions:(id)options;
 @end
 
 @interface SBBacklightController : NSObject
 + (instancetype)sharedInstance;
 - (void)animateBacklightToFactor:(float)factor duration:(double)duration source:(long long)source completion:(id)completion;
 - (float)backlightFactor;
-- (BOOL)screenIsOn;
-- (BOOL)screenIsDim;
 @end
 
-// Subsystem Đèn nền trích xuất từ dyld_shared_cache
 @interface BLSHBacklightStateMachine : NSObject
 - (long long)backlightState;
 - (BOOL)isAlwaysOnEnabled;
@@ -118,7 +106,6 @@ static void AODLog(NSString *format, ...) {
 - (void)setUsePseudoFlipbook:(BOOL)use;
 - (BOOL)alwaysFillFlipbook;
 - (void)setAlwaysFillFlipbook:(BOOL)fill;
-- (void)startFlipbookAndEnsureCurrent;
 @end
 
 @interface BLSHBacklightSceneHostEnvironment : NSObject
@@ -128,14 +115,18 @@ static void AODLog(NSString *format, ...) {
 - (BOOL)isClientActive;
 @end
 
+@interface SBFLockScreenDateViewController : UIViewController
+@end
+
 //==============================================================
-// 1. BIẾN TOÀN CỤC & TIỆN ÍCH QUẢN TRỊ TRẠNG THÁI HIỂN THỊ
+// 1. BIẾN TOÀN CỤC & QUẢN TRỊ TRẠNG THÁI HIỂN THỊ
 //==============================================================
 
 static BOOL gIsAODActive = NO;
 static BOOL gHasActiveNotification = NO;
 static BOOL gIsDisplayDriverConfigured = NO;
-static float gLastObservedBrightness = 0.5f;
+static BOOL gIsProximityBlocked = NO;
+static NSInteger gBurnInShiftCounter = 0;
 
 static inline BOOL isAODMasterEnabled(void) {
     Boolean valid = false;
@@ -144,7 +135,7 @@ static inline BOOL isAODMasterEnabled(void) {
         CFSTR("com.jb.aodreal"),
         &valid
     );
-    if (!valid) return YES; // Mặc định mở cờ cho thiết bị
+    if (!valid) return YES;
     return (BOOL)val;
 }
 
@@ -193,7 +184,7 @@ static inline BOOL isNotificationsEnabled(void) {
 }
 
 static void TriggerNotificationBoost(void) {
-    if (!isAODMasterEnabled() || !gIsAODActive) return;
+    if (!isAODMasterEnabled() || !gIsAODActive || gIsProximityBlocked) return;
     gHasActiveNotification = YES;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         gHasActiveNotification = NO;
@@ -234,21 +225,6 @@ static void TriggerNotificationBoost(void) {
     return ret;
 }
 
-%hookf(kern_return_t, IOConnectCallMethod, mach_port_t connection, uint32_t selector, const uint64_t *input, uint32_t inputCnt, const void *inputStruct, size_t inputStructCnt, uint64_t *output, uint32_t *outputCnt, void *outputStruct, size_t *outputStructCnt) {
-    kern_return_t ret = %orig(connection, selector, input, inputCnt, inputStruct, inputStructCnt, output, outputCnt, outputStruct, outputStructCnt);
-    if (ret != KERN_SUCCESS && isAODMasterEnabled() && gIsAODActive) {
-        return KERN_SUCCESS;
-    }
-    return ret;
-}
-
-%hookf(kern_return_t, IORegistryEntrySetCFProperties, io_registry_entry_t entry, CFTypeRef properties) {
-    if (isAODMasterEnabled() && gIsAODActive) {
-        return KERN_SUCCESS;
-    }
-    return %orig(entry, properties);
-}
-
 %hook CAWindowServerDisplay
 - (BOOL)supportsVariableRefreshRate { return isAODMasterEnabled() ? YES : %orig; }
 - (BOOL)supportsLowPowerRefreshRate { return isAODMasterEnabled() ? YES : %orig; }
@@ -273,11 +249,6 @@ static void TriggerNotificationBoost(void) {
 - (void)setLowPowerRefreshRate:(float)arg1 {
     if (isAODMasterEnabled()) { %orig(getCustomAODRefreshRate()); return; }
     %orig(arg1);
-}
-- (id)modeWithName:(id)arg1 {
-    id mode = %orig;
-    if (isAODMasterEnabled() && !mode) return [self currentMode];
-    return mode;
 }
 %end
 
@@ -312,33 +283,43 @@ static void TriggerNotificationBoost(void) {
 - (BOOL)disablesDisplayBlanking { return isAODMasterEnabled() ? YES : %orig; }
 %end
 
+// Chặn ngắt nguồn màn hình trừ khi bị che cảm biến hoặc úp máy
 %hook BKDisplayManager
 - (void)setBlanked:(BOOL)blanked withReason:(id)reason {
-    if (isAODMasterEnabled() && blanked) { %orig(NO, reason); return; }
+    if (isAODMasterEnabled() && gIsAODActive && blanked) {
+        if (!gIsProximityBlocked) {
+            %orig(NO, reason);
+            return;
+        }
+    }
     %orig(blanked, reason);
 }
 %end
 
-// 2.1 Hook State Machine theo đúng symbol thực tế
 %hook BLSHBacklightStateMachine
-
 - (BOOL)isAlwaysOnEnabled {
     return isAODMasterEnabled() ? YES : %orig;
 }
 
 - (BOOL)isAlwaysOnSuppressed {
-    return isAODMasterEnabled() ? NO : %orig;
+    if (isAODMasterEnabled()) {
+        return gIsProximityBlocked ? YES : %orig;
+    }
+    return %orig;
 }
 
+// FIX 1: Trả về %orig để hệ thống tắt AOD khi có cuộc gọi, camera, báo thức
 - (BOOL)isAlwaysOnDisabledByAssertion {
-    return isAODMasterEnabled() ? NO : %orig;
+    return %orig;
 }
 
 - (long long)backlightState {
     long long state = %orig;
     if (isAODMasterEnabled() && state == 0) {
-        gIsAODActive = YES;
-        return 2; // Giữ State 2 (AOD gốc)
+        if (!gIsProximityBlocked) {
+            gIsAODActive = YES;
+            return 2;
+        }
     }
     if (state != 2 && state != 0) {
         gIsAODActive = NO;
@@ -346,25 +327,24 @@ static void TriggerNotificationBoost(void) {
     }
     return state;
 }
-
 %end
 
-// 2.2 Hook Presentation Engine theo cơ chế Flipbook thật
 %hook BLSHAlwaysOnPresentationEngine
-
 - (BOOL)isSuppressed {
-    return isAODMasterEnabled() ? NO : %orig;
+    if (isAODMasterEnabled()) {
+        return gIsProximityBlocked ? YES : %orig;
+    }
+    return %orig;
 }
 
 - (void)setSuppressed:(BOOL)suppressed {
-    if (isAODMasterEnabled() && suppressed) {
+    if (isAODMasterEnabled() && !gIsProximityBlocked && suppressed) {
         %orig(NO);
         return;
     }
     %orig(suppressed);
 }
 
-// Bật cơ chế AOD giả lập nguyên bản của Apple cho màn hình thường
 - (BOOL)isUsingPseudoFlipbook {
     return isAODMasterEnabled() ? YES : %orig;
 }
@@ -373,41 +353,35 @@ static void TriggerNotificationBoost(void) {
     return isAODMasterEnabled() ? YES : %orig;
 }
 
-- (void)suspendForReason:(id)reason {
-    if (isAODMasterEnabled() && gIsAODActive) {
-        return;
-    }
-    %orig(reason);
-}
-
-%end
-
-%hook BLSHAlwaysOnSuppressionAssertion
-- (BOOL)isSuppressed { return isAODMasterEnabled() ? NO : %orig; }
+// FIX 2: Loại bỏ hook purgeFlipbook thủ công, để hệ thống tự quản lý chu kỳ dọn frame
 %end
 
 %hook BLSHBacklightSceneHostEnvironment
 - (BOOL)supportsAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
-- (BOOL)isAlwaysOnActive { return isAODMasterEnabled() ? YES : %orig; }
+- (BOOL)isAlwaysOnActive { return (isAODMasterEnabled() && !gIsProximityBlocked) ? YES : %orig; }
+- (BOOL)isClientActive { return isAODMasterEnabled() ? YES : %orig; }
 - (long long)visualState {
     long long state = %orig;
-    if (isAODMasterEnabled() && state == 0) return 2;
+    if (isAODMasterEnabled() && state == 0 && !gIsProximityBlocked) return 2;
     return state;
 }
-- (BOOL)isClientActive { return isAODMasterEnabled() ? YES : %orig; }
 %end
 
 %end // Group_Backboardd
 
 //==============================================================
-// 3. TẦNG 3: SPRINGBOARD
+// 3. TẦNG 3: SPRINGBOARD, CẢM BIẾN TIỆM CẬN & CHỐNG ÁM MÀN
 //==============================================================
 
 %group Group_SpringBoard
 
 %hook CSCoverSheetViewController
-- (BOOL)isAlwaysOnPresentation { return isAODMasterEnabled() ? YES : %orig; }
-- (BOOL)shouldDimForAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
+- (BOOL)isAlwaysOnPresentation { 
+    return (isAODMasterEnabled() && gIsAODActive && !gIsProximityBlocked) ? YES : %orig; 
+}
+- (BOOL)shouldDimForAlwaysOn { 
+    return (isAODMasterEnabled() && gIsAODActive) ? YES : %orig; 
+}
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
     if (isAODMasterEnabled() && gIsAODActive) [self updateAlwaysOnPresentationAnimated:animated];
@@ -415,15 +389,40 @@ static void TriggerNotificationBoost(void) {
 %end
 
 %hook SBLockScreenManager
-- (BOOL)shouldPreventBacklightBlankingForAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
+- (BOOL)shouldPreventBacklightBlankingForAlwaysOn { 
+    return (isAODMasterEnabled() && !gIsProximityBlocked) ? YES : %orig; 
+}
 - (void)lockUIFromSource:(int)source withOptions:(id)options {
     %orig;
-    if (isAODMasterEnabled()) gIsAODActive = YES;
+    if (isAODMasterEnabled()) {
+        gIsAODActive = YES;
+        [UIDevice currentDevice].proximityMonitoringEnabled = YES;
+    }
 }
 - (void)unlockUIFromSource:(int)source withOptions:(id)options {
     %orig;
     gIsAODActive = NO;
     gHasActiveNotification = NO;
+    gIsProximityBlocked = NO;
+    [UIDevice currentDevice].proximityMonitoringEnabled = NO;
+}
+%end
+
+// Chống ám màn hình: Tịnh tiến tọa độ vi mô cụm đồng hồ
+%hook SBFLockScreenDateViewController
+- (void)updateTimeNow {
+    %orig;
+    if (isAODMasterEnabled() && gIsAODActive) {
+        gBurnInShiftCounter++;
+        CGFloat dx = (CGFloat)((gBurnInShiftCounter % 3) - 1) * 1.5f;
+        CGFloat dy = (CGFloat)(((gBurnInShiftCounter / 3) % 3) - 1) * 1.5f;
+        
+        [UIView animateWithDuration:0.5f animations:^{
+            self.view.transform = CGAffineTransformMakeTranslation(dx, dy);
+        }];
+    } else {
+        self.view.transform = CGAffineTransformIdentity;
+    }
 }
 %end
 
@@ -441,45 +440,41 @@ static void TriggerNotificationBoost(void) {
 }
 %end
 
+// FIX 3: Chỉ can thiệp mức sáng AOD bình thường, không tự ép factor 0.0f đè lên tiệm cận
 %hook SBBacklightController
 - (void)animateBacklightToFactor:(float)factor duration:(double)duration source:(long long)source completion:(id)completion {
-    if (isAODMasterEnabled()) {
+    if (isAODMasterEnabled() && !gIsProximityBlocked) {
         if (factor <= 0.05f) {
             gIsAODActive = YES;
             factor = getCustomAODBrightnessFactor();
         } else {
             gIsAODActive = NO;
             gHasActiveNotification = NO;
-            gLastObservedBrightness = factor;
         }
     }
     %orig(factor, duration, source, completion);
 }
 %end
 
-%hook ProcessControl
-- (BOOL)hasBackgroundTasksSuspended {
-    if (gIsAODActive) return NO;
-    return %orig;
-}
-%end
-
 %end // Group_SpringBoard
 
 //==============================================================
-// 4. TẦNG 4: POSTERBOARD
+// 4. TẦNG 4: POSTERBOARD (NỀN ĐEN TUYỀN OLED)
 //==============================================================
 
 %group Group_PosterBoard
 
 %hook PRRenderingBacklightEnvironment
 - (BOOL)supportsAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
-- (BOOL)isAlwaysOnActive { return isAODMasterEnabled() ? YES : %orig; }
+- (BOOL)isAlwaysOnActive { return (isAODMasterEnabled() && !gIsProximityBlocked) ? YES : %orig; }
 %end
 
 %hook PRPosterEnvironmentImpl
 - (long long)backlightLuminance {
-    if (isAODMasterEnabled()) return isWallpaperEnabled() ? 1 : 0;
+    if (isAODMasterEnabled() && gIsAODActive) {
+        if (gIsProximityBlocked) return 0;
+        return isWallpaperEnabled() ? 1 : 0;
+    }
     return %orig;
 }
 %end
@@ -487,7 +482,7 @@ static void TriggerNotificationBoost(void) {
 %end // Group_PosterBoard
 
 //==============================================================
-// 5. TẦNG 5: GIAO DIỆN CÀI ĐẶT AOD GỐC APPLE (ĐÃ SỬA CHỐNG CRASH)
+// 5. TẦNG 5: GIAO DIỆN CÀI ĐẶT AOD GỐC APPLE
 //==============================================================
 
 %group Group_Preferences
@@ -504,7 +499,6 @@ static void TriggerNotificationBoost(void) {
 + (BOOL)isAlwaysOnDisplaySupported { return YES; }
 %end
 
-// 5.1 Chèn mục "Màn hình luôn bật" an toàn (không reload, không đệ quy)
 static void AODInjectIntoList(PSListController *list) {
     if (!list) return;
 
@@ -517,7 +511,6 @@ static void AODInjectIntoList(PSListController *list) {
 
     static NSString *const kAODID = @"ALWAYS_ON_DISPLAY";
 
-    // Kiểm tra chính xác chuỗi tránh chèn trùng lặp
     for (PSSpecifier *s in specs) {
         id specID = [s propertyForKey:@"id"];
         if ([specID isKindOfClass:[NSString class]] && [(NSString *)specID isEqualToString:kAODID]) {
@@ -525,10 +518,9 @@ static void AODInjectIntoList(PSListController *list) {
         }
     }
 
-    // Trỏ thẳng vào Class AOD gốc của Apple
     Class detailClass = NSClassFromString(@"DBSAlwaysOnViewController");
     if (!detailClass) {
-        AODLog(@"LỖI: Không tìm thấy class DBSAlwaysOnViewController trong cache");
+        AODLog(@"LỖI: Không tìm thấy class DBSAlwaysOnViewController");
         return;
     }
 
@@ -537,12 +529,11 @@ static void AODInjectIntoList(PSListController *list) {
                                                                  set:NULL
                                                                  get:NULL
                                                               detail:detailClass
-                                                                cell:2 // PSLinkCell
+                                                                cell:2
                                                                 edit:Nil];
     [aodSpec setProperty:kAODID forKey:@"id"];
     [aodSpec setProperty:NSStringFromClass(detailClass) forKey:@"detail"];
 
-    // Định vị sau mục "Đưa lên để bật" (RAISE_TO_WAKE) hoặc "Tự động khóa" (AUTOLOCK)
     NSInteger idx = -1;
     for (NSInteger i = 0; i < (NSInteger)specs.count; i++) {
         NSString *sid = [[[specs objectAtIndex:i] propertyForKey:@"id"] description].uppercaseString;
@@ -561,16 +552,13 @@ static void AODInjectIntoList(PSListController *list) {
         }
     }
 
-    // Chèn trực tiếp vào mảng hiển thị mà không gọi reloadSpecifiers
     if (idx >= 0 && idx <= (NSInteger)specs.count) {
         [list insertSpecifier:aodSpec atIndex:idx animated:NO];
     } else {
         [list addSpecifier:aodSpec animated:NO];
     }
-    AODLog(@"=> Đã chèn AOD thành công tại index %ld", (long)idx);
 }
 
-// CHỈ hook viewWillAppear để dựng UI, BỎ HOÀN TOÀN reloadSpecifiers để tránh treo lặp vô hạn
 %hook PSListController
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
@@ -578,10 +566,8 @@ static void AODInjectIntoList(PSListController *list) {
 }
 %end
 
-// 5.2 Hook trực tiếp DBSAlwaysOnViewController gốc
 %hook DBSAlwaysOnViewController
 
-// Ép hiển thị các switch gốc (Hình nền, Thông báo)
 - (id)isAlwaysOnEnabled:(PSSpecifier *)specifier {
     return @(isAODMasterEnabled());
 }
@@ -605,10 +591,9 @@ static void AODInjectIntoList(PSListController *list) {
         }
     }
 
-    // Nhúng cấu hình thanh trượt phần cứng phía dưới menu gốc của Apple
     PSSpecifier *group = [%c(PSSpecifier) preferenceSpecifierNamed:@"CẤU HÌNH PHẦN CỨNG TẦNG SÂU (2-20)"
                                                            target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
-    [group setProperty:@"Ép phần cứng hạ xung và độ sáng xuống mức tối thiểu khi khóa màn hình." forKey:@"footerText"];
+    [group setProperty:@"Ép phần cứng hạ xung nhịp và độ sáng xuống mức tối thiểu khi khóa màn hình." forKey:@"footerText"];
 
     PSSpecifier *hzSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Tần số quét tĩnh (2-20 Hz)"
                                                                target:self
@@ -637,7 +622,6 @@ static void AODInjectIntoList(PSListController *list) {
     return specs;
 }
 
-// Handlers lưu cài đặt thanh trượt
 %new
 - (void)setCustomHz:(id)value spec:(PSSpecifier *)spec {
     CFPreferencesSetAppValue(CFSTR("CustomAODRefreshRate"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
@@ -667,8 +651,21 @@ static void AODInjectIntoList(PSListController *list) {
 %end // Group_Preferences
 
 //==============================================================
-// 6. CONSTRUCTOR
+// 6. KHỞI TẠO VÀ LẮNG NGHE SỰ KIỆN HỆ THỐNG
 //==============================================================
+
+static void PreferencesChangedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    AODLog(@"Nhận được Darwin Notification: Cấu hình preferences đã thay đổi");
+}
+
+static void ProximityStateDidChange(NSNotification *notification) {
+    if (!gIsAODActive) return;
+    BOOL isClose = [UIDevice currentDevice].proximityState;
+    if (isClose != gIsProximityBlocked) {
+        gIsProximityBlocked = isClose;
+        AODLog(@"Cảm biến tiệm cận: %@", isClose ? @"BỊ CHE / ĐÚT TÚI -> TẮT MÀN" : @"HỞ -> BẬT LẠI AOD");
+    }
+}
 
 %ctor {
     @autoreleasepool {
@@ -677,8 +674,23 @@ static void AODInjectIntoList(PSListController *list) {
 
         AODLog(@"Tweak nạp vào Process: %@ | Bundle: %@", processName, bundleID);
 
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            NULL,
+            PreferencesChangedCallback,
+            CFSTR("com.jb.aodreal/preferences.changed"),
+            NULL,
+            CFNotificationSuspensionBehaviorDeliverImmediately
+        );
+
         if ([bundleID isEqualToString:@"com.apple.springboard"]) {
             %init(Group_SpringBoard);
+            [[NSNotificationCenter defaultCenter] addObserverForName:UIDeviceProximityStateDidChangeNotification
+                                                              object:nil
+                                                               queue:[NSOperationQueue mainQueue]
+                                                          usingBlock:^(NSNotification *note) {
+                ProximityStateDidChange(note);
+            }];
         } else if ([bundleID isEqualToString:@"com.apple.PosterBoard"]) {
             %init(Group_PosterBoard);
         } else if ([processName isEqualToString:@"backboardd"]) {
