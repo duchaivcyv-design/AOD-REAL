@@ -297,18 +297,21 @@ static void TriggerNotificationBoost(void) {
 %end
 
 %hook BLSHBacklightStateMachine
+
 - (BOOL)isAlwaysOnEnabled {
     return isAODMasterEnabled() ? YES : %orig;
 }
 
 - (BOOL)isAlwaysOnSuppressed {
     if (isAODMasterEnabled()) {
-        return gIsProximityBlocked ? YES : %orig;
+        // SỬA Ở ĐÂY: Phải trả về NO cứng để ép hệ thống KHÔNG được đè nén AOD.
+        // Chỉ trả về YES khi điện thoại bị che cảm biến / đút túi.
+        return gIsProximityBlocked ? YES : NO;
     }
     return %orig;
 }
 
-// FIX 1: Trả về %orig để hệ thống tắt AOD khi có cuộc gọi, camera, báo thức
+// Trả về %orig để hệ thống tắt AOD khi có cuộc gọi, camera, báo thức
 - (BOOL)isAlwaysOnDisabledByAssertion {
     return %orig;
 }
@@ -318,7 +321,7 @@ static void TriggerNotificationBoost(void) {
     if (isAODMasterEnabled() && state == 0) {
         if (!gIsProximityBlocked) {
             gIsAODActive = YES;
-            return 2;
+            return 2; // Ép sang State 2 (Trạng thái AOD)
         }
     }
     if (state != 2 && state != 0) {
