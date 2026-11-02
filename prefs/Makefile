@@ -5,7 +5,7 @@ include $(THEOS)/makefiles/common.mk
 
 BUNDLE_NAME = AODREALPrefs
 AODREALPrefs_FILES = AODREALRootListController.m
-AODREALPrefs_FRAMEWORKS = UIKit Foundation
+AODREALPrefs_FRAMEWORKS = UIKit
 AODREALPrefs_INSTALL_PATH = /Library/PreferenceBundles
 AODREALPrefs_PRIVATE_FRAMEWORKS = Preferences
 AODREALPrefs_RESOURCE_DIR = Resources
