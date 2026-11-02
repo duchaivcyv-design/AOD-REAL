@@ -12,8 +12,8 @@
 typedef NS_ENUM(NSInteger, AODState) {
     AODStateIdle = 0,       // Màn hình sáng bình thường / Đang dùng
     AODStateTransitioning,  // Đang chạy animation lặn dần vào AOD (0.45s)
-    AODStateActive,        // Đang hiển thị AOD tĩnh
-    AODStateProximityOff   // Đang đút túi / Úp màn hình (Tắt đèn nền về 0)
+    AODStateActive,         // Đang hiển thị AOD tĩnh
+    AODStateProximityOff    // Đang đút túi / Úp màn hình / Che camera (Tắt đèn nền về 0)
 };
 
 static AODState gCurrentState = AODStateIdle;
@@ -21,66 +21,57 @@ static CGFloat gCurrentAODProgress = 1.0f;
 static NSInteger gBurnInShiftStep = 0;
 static id gInjectedSessionProvider = nil;
 
-// Đọc trực tiếp từ domain cài đặt AOD gốc của Apple: com.apple.BacklightServices
-static inline BOOL isAODMasterEnabled(void) {
+// Biến lưu cấu hình tải nhanh trong bộ nhớ
+static BOOL gCachedAODEnabled = YES;
+static BOOL gCachedWallpaperEnabled = YES;
+static BOOL gCachedNotificationsEnabled = YES;
+static float gCachedCustomHz = 2.0f;
+static float gCachedBrightnessFactor = 0.08f;
+
+static inline void loadAODPreferences(void) {
     Boolean valid = false;
-    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("AlwaysOnDisplayEnabled"), CFSTR("com.apple.BacklightServices"), &valid);
-    if (!valid) {
-        val = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.apple.BacklightServices"), &valid);
+    
+    // 1. Công tắc chính AOD
+    Boolean masterVal = CFPreferencesGetAppBooleanValue(CFSTR("AlwaysOnDisplayEnabled"), CFSTR("com.apple.BacklightServices"), &valid);
+    if (!valid) masterVal = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.apple.BacklightServices"), &valid);
+    if (!valid) masterVal = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.jb.aodreal"), &valid);
+    gCachedAODEnabled = valid ? (BOOL)masterVal : YES;
+
+    // 2. Công tắc Hiển thị hình nền gốc
+    valid = false;
+    Boolean wpVal = CFPreferencesGetAppBooleanValue(CFSTR("ShowWallpaperInAlwaysOn"), CFSTR("com.apple.BacklightServices"), &valid);
+    if (!valid) wpVal = CFPreferencesGetAppBooleanValue(CFSTR("ShowWallpaperInAlwaysOn"), CFSTR("com.jb.aodreal"), &valid);
+    gCachedWallpaperEnabled = valid ? (BOOL)wpVal : YES;
+
+    // 3. Công tắc Hiển thị thông báo gốc
+    valid = false;
+    Boolean notiVal = CFPreferencesGetAppBooleanValue(CFSTR("ShowNotificationsInAlwaysOn"), CFSTR("com.apple.BacklightServices"), &valid);
+    if (!valid) notiVal = CFPreferencesGetAppBooleanValue(CFSTR("ShowNotificationsInAlwaysOn"), CFSTR("com.jb.aodreal"), &valid);
+    gCachedNotificationsEnabled = valid ? (BOOL)notiVal : YES;
+
+    // 4. Slider tần số quét tầng sâu (2-30 Hz)
+    CFPropertyListRef hzVal = CFPreferencesCopyAppValue(CFSTR("CustomAODRefreshRate"), CFSTR("com.jb.aodreal"));
+    if (hzVal && CFGetTypeID(hzVal) == CFNumberGetTypeID()) {
+        float r = [(__bridge NSNumber *)hzVal floatValue];
+        if (r >= 2.0f && r <= 30.0f) gCachedCustomHz = r;
     }
-    if (!valid) {
-        val = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.jb.aodreal"), &valid);
+    if (hzVal) CFRelease(hzVal);
+
+    // 5. Slider độ sáng tầng sâu (1-30)
+    CFPropertyListRef brVal = CFPreferencesCopyAppValue(CFSTR("CustomAODBrightness"), CFSTR("com.jb.aodreal"));
+    if (brVal && CFGetTypeID(brVal) == CFNumberGetTypeID()) {
+        float b = [(__bridge NSNumber *)brVal floatValue];
+        if (b >= 1.0f && b <= 30.0f) gCachedBrightnessFactor = b / 1000.0f;
     }
-    return valid ? (BOOL)val : YES;
+    if (brVal) CFRelease(brVal);
 }
 
-static inline BOOL isWallpaperEnabled(void) {
-    Boolean valid = false;
-    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("ShowWallpaperInAlwaysOn"), CFSTR("com.apple.BacklightServices"), &valid);
-    if (!valid) {
-        val = CFPreferencesGetAppBooleanValue(CFSTR("ShowWallpaperInAlwaysOn"), CFSTR("com.jb.aodreal"), &valid);
-    }
-    return valid ? (BOOL)val : YES;
-}
-
-static inline BOOL isBlurWallpaperEnabled(void) {
-    Boolean valid = false;
-    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("BlurWallpaperInAlwaysOn"), CFSTR("com.jb.aodreal"), &valid);
-    return valid ? (BOOL)val : NO;
-}
-
-static inline BOOL isNotificationsEnabled(void) {
-    Boolean valid = false;
-    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("ShowNotificationsInAlwaysOn"), CFSTR("com.apple.BacklightServices"), &valid);
-    if (!valid) {
-        val = CFPreferencesGetAppBooleanValue(CFSTR("ShowNotificationsInAlwaysOn"), CFSTR("com.jb.aodreal"), &valid);
-    }
-    return valid ? (BOOL)val : YES;
-}
-
-static inline float getCustomAODRefreshRate(void) {
-    CFPropertyListRef val = CFPreferencesCopyAppValue(CFSTR("CustomAODRefreshRate"), CFSTR("com.jb.aodreal"));
-    if (val && CFGetTypeID(val) == CFNumberGetTypeID()) {
-        float rate = [(__bridge NSNumber *)val floatValue];
-        CFRelease(val);
-        if (rate >= 2.0f && rate <= 30.0f) return rate;
-    }
-    if (val) CFRelease(val);
-    return 2.0f;
-}
-
-static inline float getAODPanelBrightnessFactor(void) {
-    // Độ sáng đèn nền màn hình ở mức vừa đủ để nuôi tấm nền LCD/OLED
-    // Đồng thời các thành phần chữ (đồng hồ, widget) được đẩy độ tương phản tối đa
-    CFPropertyListRef val = CFPreferencesCopyAppValue(CFSTR("CustomAODBrightness"), CFSTR("com.jb.aodreal"));
-    if (val && CFGetTypeID(val) == CFNumberGetTypeID()) {
-        float level = [(__bridge NSNumber *)val floatValue];
-        CFRelease(val);
-        if (level >= 1.0f && level <= 30.0f) return level / 1000.0f;
-    }
-    if (val) CFRelease(val);
-    return 0.08f;
-}
+static inline BOOL isAODMasterEnabled(void) { return gCachedAODEnabled; }
+static inline BOOL isWallpaperEnabled(void) { return gCachedWallpaperEnabled; }
+static inline BOOL isNotificationsEnabled(void) { return gCachedNotificationsEnabled; }
+static inline float getCustomAODRefreshRate(void) { return gCachedCustomHz; }
+static inline float getAODPanelBrightnessFactor(void) { return gCachedBrightnessFactor; }
+static inline float getCustomAODBrightnessFactor(void) { return gCachedBrightnessFactor; }
 
 //==============================================================
 // 1. KHAI BÁO CÁC LỚP VÀ GIAO DIỆN HỆ THỐNG
@@ -196,6 +187,10 @@ static inline float getAODPanelBrightnessFactor(void) {
 - (void)setBacklightLevel:(float)level;
 - (void)_updateAppearanceForAODTransitionToInactive:(BOOL)inactive;
 - (void)_updateWallpaperEffectView;
+- (void)_updateDateTimeView;
+- (void)_updateComplicationsContainerView;
+- (void)_updateVibrancy;
+- (void)_updateContent;
 - (NSArray *)sceneHostEnvironmentEntriesForBacklightSession;
 @end
 
@@ -235,6 +230,7 @@ static inline float getAODPanelBrightnessFactor(void) {
 - (_UILegibilitySettings *)legibilitySettings;
 - (void)setLegibilitySettings:(_UILegibilitySettings *)settings;
 - (void)updateTimeNow;
+- (void)_updateWithFrameSpecifier:(id)arg1;
 @end
 
 @interface SBLockScreenViewControllerBase : UIViewController
@@ -257,7 +253,8 @@ static inline float getAODPanelBrightnessFactor(void) {
 @interface SBTapToWakeController : NSObject
 - (BOOL)isTapToWakeSupported;
 - (BOOL)shouldTapToWake;
-- (void)tapToWakeDidRecognize:(id)arg1;
+- (void)setTapToWakeGestureRecognizer:(UITapGestureRecognizer *)gesture;
+- (void)tapToWakeDidRecognize:(UITapGestureRecognizer *)arg1;
 @end
 
 @interface SBBacklightController : NSObject
@@ -269,6 +266,8 @@ static inline float getAODPanelBrightnessFactor(void) {
 @end
 
 @interface SBProximitySensorManager : NSObject
+- (BOOL)isProximityDetectionPermitted;
+- (BOOL)isProximityDetectionEnabled;
 - (void)_setObjectInProximity:(BOOL)inProximity detectionMode:(int)mode;
 @end
 
@@ -285,9 +284,10 @@ static inline float getAODPanelBrightnessFactor(void) {
 - (BOOL)isUsingPseudoFlipbook;
 - (BOOL)alwaysFillFlipbook;
 - (void)createFlipbook;
-- (void)startFlipbookAndEnsureCurrent;
 - (id)frameOnGlassNow;
 - (void)startLiveUpdates;
+- (void)main_performLiveUpdateIfNeeded;
+- (void)suspendForReason:(id)reason;
 @end
 
 @interface BLSHPseudoFlipbook : NSObject
@@ -317,6 +317,20 @@ static inline float getAODPanelBrightnessFactor(void) {
 - (void)setLinearBacklightProgress:(CGFloat)progress;
 - (long long)luminance;
 - (BOOL)isLowLuminance;
+@end
+
+@interface PRPosterLockPosterHomeScreenAppearance : NSObject
+- (BOOL)isLegibilityBlurEnabled;
+- (BOOL)allowsModifyingLegibilityBlur;
+@end
+
+@interface PRPosterHomePosterHomeScreenAppearance : NSObject
+- (BOOL)isLegibilityBlurEnabled;
+- (BOOL)allowsModifyingLegibilityBlur;
+@end
+
+@interface PRPosterDescriptorHomeScreenConfiguration : NSObject
+- (BOOL)allowsModifyingLegibilityBlur;
 @end
 
 @interface BLSBacklight : NSObject
@@ -510,31 +524,49 @@ static inline float getAODPanelBrightnessFactor(void) {
 %end
 
 %hook BLSHAlwaysOnPresentationEngine
+
 - (BOOL)isSuppressed {
-    if (isAODMasterEnabled()) return (gCurrentState == AODStateProximityOff) ? YES : %orig;
+    if (isAODMasterEnabled()) {
+        // Chỉ triệt tiêu hiển thị khi che cảm biến tiệm cận / úp máy
+        if (gCurrentState == AODStateProximityOff) return YES;
+    }
     return %orig;
 }
 
 - (void)setSuppressed:(BOOL)suppressed {
-    if (isAODMasterEnabled() && gCurrentState != AODStateProximityOff && suppressed) {
+    // Nếu đang ở trạng thái AOD bình thường mà hệ thống đòi tắt do rảnh rỗi, giữ nguyên không cho tắt
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive && suppressed) {
         %orig(NO);
         return;
     }
     %orig(suppressed);
 }
 
-- (BOOL)isUsingPseudoFlipbook { return isAODMasterEnabled() ? YES : %orig; }
-- (BOOL)alwaysFillFlipbook { return isAODMasterEnabled() ? YES : %orig; }
+// Giữ PseudoFlipbook để render giả lập trên màn hình thường mà không bị crash buffer
+- (BOOL)isUsingPseudoFlipbook { 
+    return isAODMasterEnabled() ? YES : %orig; 
+}
 
+// Bắt đúng chu trình cập nhật thời gian thực theo danh sách selector gốc
 - (void)startLiveUpdates {
     %orig;
     if (isAODMasterEnabled()) {
         @try {
-            [self startFlipbookAndEnsureCurrent];
+            [self main_performLiveUpdateIfNeeded];
         } @catch (NSException *e) {}
     }
 }
+
+// Chặn lệnh tạm dừng cập nhật của engine khi máy đứng yên
+- (void)suspendForReason:(id)reason {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        return; // Chặn đóng băng vòng lặp AOD để đồng hồ, thông báo luôn chạy
+    }
+    %orig(reason);
+}
+
 %end
+
 
 %hook BLSHBacklightSceneHostEnvironment
 - (BOOL)supportsAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
@@ -560,9 +592,17 @@ static CSCombinedListViewController *gCombinedListVC = nil;
 static id gCachedFlipbookSpec = nil;
 
 %hook CSCoverSheetViewController
+
 - (void)viewDidLoad {
     %orig;
     gCoverSheetVC = self;
+}
+
+- (void)dealloc {
+    if (gCoverSheetVC == self) {
+        gCoverSheetVC = nil;
+    }
+    %orig;
 }
 
 - (BOOL)isAlwaysOnPresentation { 
@@ -585,7 +625,20 @@ static id gCachedFlipbookSpec = nil;
     return %orig;
 }
 
-// CÔNG TẮC GỐC SHOW WALLPAPER & BLUR WALLPAPER CHUẨN XÁC
+// BẬT CHU TRÌNH UPDATE LIÊN TỤC CHO ĐỒNG HỒ, WIDGET, THÔNG BÁO (CHỐNG TREO/ĐÓNG BĂNG MÀN HÌNH)
+- (void)_updateAppearanceForAODTransitionToInactive:(BOOL)inactive {
+    %orig(inactive);
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+        @try {
+            [self _updateDateTimeView];
+            [self _updateComplicationsContainerView];
+            [self _updateVibrancy];
+            [self _updateContent];
+        } @catch (NSException *e) {}
+    }
+}
+
+// CÔNG TẮC GỐC SHOW WALLPAPER & ÉP MỜ GỐC (KHÔNG DÙNG CÔNG TẮC HAY VIEW TỰ CHẾ)
 - (void)_updateWallpaperEffectView {
     %orig;
     
@@ -611,7 +664,7 @@ static id gCachedFlipbookSpec = nil;
             }
             self.view.backgroundColor = [UIColor blackColor];
         } else {
-            // 2. HIỆN HÌNH NỀN:
+            // 2. HIỆN HÌNH NỀN: TRẢ NỀN TRONG ĐỂ POSTERKIT RENDER HIỆU ỨNG MỜ CHUẨN GỐC
             if (floatingLayer) {
                 floatingLayer.hidden = NO;
                 floatingLayer.alpha = 1.0f;
@@ -620,17 +673,9 @@ static id gCachedFlipbookSpec = nil;
             
             if (effectView) {
                 effectView.hidden = NO;
-                if (isBlurWallpaperEnabled()) {
-                    // LÀM MỜ NHẸ NHÀNG KHÔNG DÙNG CAFILTER NẶNG NỀ (CHỐNG NÓNG MÁY & CHỐNG LAG)
-                    effectView.backgroundColor = [UIColor colorWithWhite:0.0f alpha:0.40f];
-                    effectView.alpha = 1.0f;
-                    effectView.layer.filters = nil;
-                } else {
-                    // KHÔNG LÀM MỜ: TRẢ VỀ ĐỘ TRONG TỰ NHIÊN
-                    effectView.backgroundColor = [UIColor clearColor];
-                    effectView.alpha = 0.0f;
-                    effectView.layer.filters = nil;
-                }
+                effectView.backgroundColor = [UIColor clearColor];
+                effectView.alpha = 0.0f;
+                effectView.layer.filters = nil;
             }
         }
     } else {
@@ -666,6 +711,7 @@ static id gCachedFlipbookSpec = nil;
         gCurrentState = AODStateIdle;
     }
 }
+
 %end
 
 // CÔNG TẮC GỐC SHOW NOTIFICATIONS: AN TOÀN TUYỆT ĐỐI, CHỐNG RESPRING
@@ -1020,56 +1066,85 @@ static id gCachedFlipbookSpec = nil;
 %end
 
 //==============================================================
-// CẢM ỨNG CHẠM ĐÁNH THỨC (CHỐNG CHẠM NHẦM KHI TAY ƯỚT / NƯỚC MƯA)
+// CẢM ỨNG CHẠM ĐÁNH THỨC: CHẠM 2 LẦN (DOUBLE TAP) & CHỐNG CHẠM NƯỚC/TAY ƯỚT
 //==============================================================
 
 %hook SBTapToWakeController
 - (BOOL)isTapToWakeSupported { return isAODMasterEnabled() ? YES : %orig; }
 - (BOOL)shouldTapToWake { return isAODMasterEnabled() ? YES : %orig; }
 
-- (void)tapToWakeDidRecognize:(id)arg1 {
+// Can thiệp vào Gesture Recognizer gốc để ép chạm đúng 2 lần
+- (void)setTapToWakeGestureRecognizer:(UITapGestureRecognizer *)gesture {
+    if (isAODMasterEnabled() && [gesture isKindOfClass:[UITapGestureRecognizer class]]) {
+        gesture.numberOfTapsRequired = 2; // Ép chạm 2 lần mới thức màn hình
+    }
+    %orig(gesture);
+}
+
+- (void)tapToWakeDidRecognize:(UITapGestureRecognizer *)gesture {
     if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
         
-        // LỌC CHẠM NƯỚC / TAY ƯỚT DỰA TRÊN DIỆN TÍCH TIẾP XÚC (MAJOR RADIUS)
-        @try {
-            if ([arg1 respondsToSelector:@selector(allTouches)]) {
-                NSSet *touches = [arg1 performSelector:@selector(allTouches)];
+        // Lấy tọa độ và kiểm tra hợp lệ của gesture
+        if ([gesture state] == UIGestureRecognizerStateRecognized || [gesture state] == UIGestureRecognizerStateEnded) {
+            
+            // Lọc chạm do nước / tay ướt thông qua view và window chạm
+            UIView *view = [gesture view];
+            UIWindow *window = view.window ?: [self valueForKey:@"_inactiveTouchShieldWindow"];
+            
+            // Kiểm tra trạng thái diện tích tiếp xúc từ touch hiện hành nếu có
+            @try {
+                NSArray *touches = [gesture valueForKey:@"_touches"];
                 for (UITouch *touch in touches) {
-                    // Nếu diện tích chạm quá lớn (do nước mưa loang hoặc lòng bàn tay) -> Hủy lệnh đánh thức
                     if (touch.majorRadius > 18.0f || touch.majorRadiusTolerance > 10.0f) {
-                        return;
+                        return; // Vùng tiếp xúc loang lổ (nước mưa / lòng bàn tay ướt) -> Bỏ qua
                     }
                 }
-            }
-        } @catch (NSException *e) {}
+            } @catch (NSException *e) {}
 
-        // Thỏa mãn chạm ngón tay chuẩn -> Đánh thức màn hình ngay lập tức
-        [[%c(SBLockScreenManager) sharedInstance] _wakeScreenForTapToWake];
+            // Thỏa mãn chạm 2 lần hợp lệ -> Gọi thẳng API đánh thức màn hình của Apple
+            [[%c(SBLockScreenManager) sharedInstance] _wakeScreenForTapToWake];
+        }
     }
-    %orig(arg1);
+    %orig(gesture);
 }
 %end
 
 //==============================================================
-// CẢM BIẾN TIỆM CẬN (CHE TỐI / ĐÚT TÚI LÀ NGẮT HOÀN TOÀN AOD)
+// CẢM BIẾN TIỆM CẬN: DUY TRÌ LIÊN TỤC & TẮT HẲN PANEL KHI CHE TỐI
 //==============================================================
 
 %hook SBProximitySensorManager
+
+- (BOOL)isProximityDetectionPermitted {
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning || gCurrentState == AODStateProximityOff)) {
+        return YES; // Bắt buộc cho phép cảm biến hoạt động khi đang ở AOD
+    }
+    return %orig;
+}
+
+- (BOOL)isProximityDetectionEnabled {
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning || gCurrentState == AODStateProximityOff)) {
+        return YES;
+    }
+    return %orig;
+}
+
 - (void)_setObjectInProximity:(BOOL)inProximity detectionMode:(int)mode {
     %orig(inProximity, mode);
     if (!isAODMasterEnabled() || gCurrentState == AODStateIdle) return;
     
     if (inProximity) {
-        // Che camera / Tối hoàn toàn / Đút túi -> Tắt đen đèn nền panel về 0 để tiết kiệm pin tối đa
+        // Che camera / úp máy / đút túi -> Dập tắt đèn nền màn hình về 0
         gCurrentState = AODStateProximityOff;
         [[%c(SBBacklightController) sharedInstance] setBacklightState:0 source:1 animated:NO completion:nil];
     } else {
-        // Nhấc ra khỏi chỗ tối / Hết che camera -> Tự động phục hồi trạng thái AOD mượt mà
+        // Nhấc máy ra / hết che -> Phục hồi hiển thị AOD tức thì
         gCurrentState = AODStateActive;
         [[%c(SBBacklightController) sharedInstance] setBacklightState:2 source:1 animated:YES completion:nil];
     }
 }
 %end
+
 
 // CHỐNG ÁM MÀN HÌNH: Dịch chuyển vi mô đồng hồ
 %hook SBFLockScreenDateViewController
@@ -1093,16 +1168,20 @@ static id gCachedFlipbookSpec = nil;
 %end // Group_SpringBoard
 
 //==============================================================
-// 4. TẦNG POSTERBOARD: LÀM TỐI HÌNH NỀN ĐỘC LẬP
+// 4. TẦNG POSTERBOARD: LÀM TỐI & ÉP MỜ HÌNH NỀN GỐC APPLE 100%
 //==============================================================
 
 %group Group_PosterBoard
 
 %hook PRPosterEnvironmentImpl
+
 - (CGFloat)backlightProgress {
     if (isAODMasterEnabled()) {
-        if (!isWallpaperEnabled()) return 0.0f; // Tắt hình nền
-        if (gCurrentState == AODStateActive) return 0.0f;
+        // Tắt hình nền: Cho progress = 0 để đen hoàn toàn
+        if (!isWallpaperEnabled()) return 0.0f;
+        
+        // Hiện hình nền: Giữ mức sáng tối thiểu (0.15f - 0.25f) để poster hiển thị mờ ảo trong AOD
+        if (gCurrentState == AODStateActive) return 0.20f;
         if (gCurrentState == AODStateTransitioning) return gCurrentAODProgress;
     }
     return %orig;
@@ -1111,7 +1190,7 @@ static id gCachedFlipbookSpec = nil;
 - (CGFloat)linearBacklightProgress {
     if (isAODMasterEnabled()) {
         if (!isWallpaperEnabled()) return 0.0f;
-        if (gCurrentState == AODStateActive) return 0.0f;
+        if (gCurrentState == AODStateActive) return 0.20f;
         if (gCurrentState == AODStateTransitioning) return gCurrentAODProgress;
     }
     return %orig;
@@ -1119,23 +1198,26 @@ static id gCachedFlipbookSpec = nil;
 
 - (long long)luminance {
     if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-        return 1;
+        return 1; // Mức độ chói tối thiểu của Apple
     }
     return %orig;
 }
 
 - (BOOL)isLowLuminance {
     if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-        return YES;
+        return YES; // Ép chế độ hạ độ chói AOD gốc của PosterKit
     }
     return %orig;
 }
+
 %end
 
+// ÉP BẬT TÍNH NĂNG LÀM MỜ ẢNH NỀN GỐC (LEGIBILITY BLUR) MẶC ĐỊNH CHO AOD
 %hook PRPosterLockPosterHomeScreenAppearance
+
 - (BOOL)isLegibilityBlurEnabled {
-    if (isAODMasterEnabled() && isBlurWallpaperEnabled()) {
-        return YES;
+    if (isAODMasterEnabled()) {
+        return YES; // Luôn kích hoạt hiệu ứng mờ gốc của Apple khi ở AOD
     }
     return %orig;
 }
@@ -1143,11 +1225,13 @@ static id gCachedFlipbookSpec = nil;
 - (BOOL)allowsModifyingLegibilityBlur {
     return YES;
 }
+
 %end
 
 %hook PRPosterHomePosterHomeScreenAppearance
+
 - (BOOL)isLegibilityBlurEnabled {
-    if (isAODMasterEnabled() && isBlurWallpaperEnabled()) {
+    if (isAODMasterEnabled()) {
         return YES;
     }
     return %orig;
@@ -1156,8 +1240,16 @@ static id gCachedFlipbookSpec = nil;
 - (BOOL)allowsModifyingLegibilityBlur {
     return YES;
 }
+
 %end
 
+%hook PRPosterDescriptorHomeScreenConfiguration
+
+- (BOOL)allowsModifyingLegibilityBlur {
+    return YES;
+}
+
+%end
 
 %end // Group_PosterBoard
 
@@ -1245,7 +1337,10 @@ static id gCachedFlipbookSpec = nil;
 }
 %end
 
-// TRANG CÀI ĐẶT AOD: KHÔNG LẶP CÔNG TẮC, KHÔNG TRỐNG TRANG
+//==============================================================
+// TRANG CÀI ĐẶT AOD GỐC APPLE 100% (KHÔNG CÔNG TẮC THỪA, CHỐNG LẶP TUYỆT ĐỐI)
+//==============================================================
+
 %hook DBSAlwaysOnViewController
 
 - (id)isAlwaysOnEnabled:(PSSpecifier *)specifier { 
@@ -1263,59 +1358,30 @@ static id gCachedFlipbookSpec = nil;
 }
 
 - (NSMutableArray *)specifiers {
+    // 1. Kiểm tra cache nội bộ: nếu đã nạp khối phần cứng rồi thì trả về luôn, tránh lặp lại khi refresh
+    id cached = [self valueForKey:@"_specifiers"];
+    if (cached && [cached count] > 0) {
+        for (PSSpecifier *s in (NSArray *)cached) {
+            if ([[s propertyForKey:@"id"] isEqualToString:@"AOD_CUSTOM_HZ_KEY"]) {
+                return cached;
+            }
+        }
+    }
+
+    // 2. Lấy danh sách specifier gốc chuẩn của Apple (gồm Hiển thị hình nền, Hiển thị thông báo, Màn hình Luôn bật)
     NSMutableArray *specs = %orig;
     if (!specs) specs = [NSMutableArray array];
 
-    static NSString *const kBlurID = @"AOD_BLUR_WALLPAPER_KEY";
     static NSString *const kHzID = @"AOD_CUSTOM_HZ_KEY";
     static NSString *const kBrightID = @"AOD_CUSTOM_BRIGHTNESS_KEY";
 
-    // Chống lặp: Nếu đã chèn khối tinh chỉnh rồi thì trả về ngay
     for (PSSpecifier *s in specs) {
         if ([[s propertyForKey:@"id"] isEqualToString:kHzID]) {
             return specs;
         }
     }
 
-    // 1. CHÈN DUY NHẤT 1 CÔNG TẮC "Blur Wallpaper Photo" VÀO CHÍNH GIỮA HÌNH NỀN VÀ THÔNG BÁO
-    BOOL hasBlur = NO;
-    for (PSSpecifier *s in specs) {
-        if ([[s propertyForKey:@"id"] isEqualToString:kBlurID]) {
-            hasBlur = YES;
-            break;
-        }
-    }
-
-    if (!hasBlur) {
-        PSSpecifier *blurSwitch = [%c(PSSpecifier) preferenceSpecifierNamed:@"Blur Wallpaper Photo"
-                                                                    target:self
-                                                                       set:@selector(setBlurWallpaper:spec:)
-                                                                       get:@selector(getBlurWallpaper:)
-                                                                    detail:Nil
-                                                                      cell:6
-                                                                      edit:Nil];
-        [blurSwitch setProperty:kBlurID forKey:@"id"];
-
-        // Tìm vị trí của "Hiển thị hình nền" để chèn ngay sau nó
-        NSInteger wpIndex = -1;
-        for (NSInteger i = 0; i < (NSInteger)specs.count; i++) {
-            PSSpecifier *s = [specs objectAtIndex:i];
-            NSString *sid = [[s propertyForKey:@"id"] description];
-            SEL getter = (SEL)[[s propertyForKey:@"getter"] pointerValue];
-            NSString *getterStr = getter ? NSStringFromSelector(getter) : @"";
-
-            if ([sid isEqualToString:@"SHOW_WALLPAPER"] || [getterStr containsString:@"Wallpaper"] || [getterStr containsString:@"wallpaper"]) {
-                wpIndex = i;
-                break;
-            }
-        }
-
-        if (wpIndex >= 0 && (wpIndex + 1) <= (NSInteger)specs.count) {
-            [specs insertObject:blurSwitch atIndex:wpIndex + 1];
-        }
-    }
-
-    // 2. KHỐI CẤU HÌNH PHẦN CỨNG TẦNG SÂU (GIỮ NGUYÊN DƯỚI CÙNG NHƯ ẢNH 2)
+    // 3. KHỐI CẤU HÌNH PHẦN CỨNG TẦNG SÂU (GIỮ NGUYÊN DƯỚI CÙNG NHƯ ẢNH GỐC)
     PSSpecifier *group = [%c(PSSpecifier) preferenceSpecifierNamed:@"CẤU HÌNH PHẦN CỨNG TẦNG SÂU (2-20)"
                                                            target:self 
                                                               set:NULL 
@@ -1352,23 +1418,11 @@ static id gCachedFlipbookSpec = nil;
     [brightSlider setProperty:@YES forKey:@"showValue"];
     [specs addObject:brightSlider];
 
+    [self setValue:specs forKey:@"_specifiers"];
     return specs;
 }
 
-%new
-- (void)setBlurWallpaper:(id)value spec:(PSSpecifier *)spec {
-    CFPreferencesSetAppValue(CFSTR("BlurWallpaperInAlwaysOn"), (__bridge CFPropertyListRef)(value), CFSTR("com.apple.BacklightServices"));
-    CFPreferencesSetAppValue(CFSTR("BlurWallpaperInAlwaysOn"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
-    CFPreferencesAppSynchronize(CFSTR("com.apple.BacklightServices"));
-    CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
-    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
-}
-
-%new
-- (id)getBlurWallpaper:(PSSpecifier *)spec { 
-    return @(isBlurWallpaperEnabled()); 
-}
-
+// GETTER & SETTER CHO THANH TRƯỢT TẦNG SÂU (NẰM ĐÚNG BÊN TRONG %hook)
 %new
 - (void)setCustomHz:(id)value spec:(PSSpecifier *)spec {
     CFPreferencesSetAppValue(CFSTR("CustomAODRefreshRate"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
@@ -1377,7 +1431,9 @@ static id gCachedFlipbookSpec = nil;
 }
 
 %new
-- (id)getCustomHz:(PSSpecifier *)spec { return @(getCustomAODRefreshRate()); }
+- (id)getCustomHz:(PSSpecifier *)spec { 
+    return @(getCustomAODRefreshRate()); 
+}
 
 %new
 - (void)setCustomBrightness:(id)value spec:(PSSpecifier *)spec {
@@ -1387,28 +1443,51 @@ static id gCachedFlipbookSpec = nil;
 }
 
 %new
-- (id)getCustomBrightness:(PSSpecifier *)spec { return @(getAODPanelBrightnessFactor() * 1000.0f); }
+- (id)getCustomBrightness:(PSSpecifier *)spec { 
+    return @(getCustomAODBrightnessFactor() * 1000.0f); 
+}
 
-%end // Group_Preferences
+%end // Kết thúc %hook DBSAlwaysOnViewController
 
-%end
+%end // Kết thúc %group Group_Preferences
 
 //==============================================================
-// 6. KHỞI TẠO TIẾN TRÌNH
+// 6. KHỞI TẠO TIẾN TRÌNH & ĐỒNG BỘ CẤU HÌNH REALTIME
 //==============================================================
+
+// Hàm callback tải lại cấu hình khi có thay đổi từ Preferences
+static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    loadAODPreferences();
+}
 
 %ctor {
     @autoreleasepool {
         NSString *processName = [[NSProcessInfo processInfo] processName];
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
 
+        // 1. Tải cấu hình lần đầu cho mọi tiến trình
+        loadAODPreferences();
+
+        // 2. Đăng ký lắng nghe Darwin Notification để đồng bộ realtime không cần respring
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            NULL,
+            AODPreferencesReloadCallback,
+            CFSTR("com.jb.aodreal/preferences.changed"),
+            NULL,
+            CFNotificationSuspensionBehaviorDeliverImmediately
+        );
+
+        // 3. Phân luồng nạp Hook chính xác theo từng tiến trình hệ thống
         if ([bundleID isEqualToString:@"com.apple.springboard"]) {
             %init(Group_SpringBoard);
-        } else if ([bundleID isEqualToString:@"com.apple.PosterBoard"]) {
+        } else if ([bundleID isEqualToString:@"com.apple.PosterBoard"] || [processName containsString:@"PosterBoard"]) {
             %init(Group_PosterBoard);
         } else if ([processName isEqualToString:@"backboardd"]) {
             %init(Group_Backboardd);
-        } else if ([bundleID isEqualToString:@"com.apple.Preferences"] || [processName isEqualToString:@"Preferences"]) {
+        } else if ([bundleID isEqualToString:@"com.apple.Preferences"] || 
+                   [processName containsString:@"Preferences"] || 
+                   [bundleID containsString:@"Preferences"]) {
             %init(Group_Preferences);
         }
     }
