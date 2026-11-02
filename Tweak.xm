@@ -1152,7 +1152,7 @@ static id gCachedFlipbookSpec = nil;
 %end // Group_PosterBoard
 
 //==============================================================
-// 5. TẦNG PREFERENCES: MỞ ẨN BỘ 3 CÔNG TẮC GỐC APPLE 100%
+// 5. TẦNG PREFERENCES: MỞ CÔNG TẮC GỐC + LÀM MỜ ẢNH NỀN GỐC
 //==============================================================
 
 %group Group_Preferences
@@ -1219,7 +1219,6 @@ static void AODInjectIntoList(PSListController *list) {
 }
 %end
 
-// MỞ TRỌN VẸN CÔNG TẮC GỐC CỦA APPLE KÈM SLIDER TẦNG SÂU// MỞ TRỌN VẸN CÔNG TẮC GỐC CỦA APPLE KÈM SLIDER TẦNG SÂU (CHUẨN XÁC KHÔNG LẶP)
 %hook DBSAlwaysOnViewController
 
 - (id)isAlwaysOnEnabled:(PSSpecifier *)specifier { return @(isAODMasterEnabled()); }
@@ -1242,7 +1241,7 @@ static void AODInjectIntoList(PSListController *list) {
     static NSString *const kAODHzID = @"AOD_CUSTOM_HZ_KEY";
     static NSString *const kAODBrightID = @"AOD_CUSTOM_BRIGHTNESS_KEY";
 
-    // 1. Quét theo ID gốc và Target-Action của Apple (Không phụ thuộc chuỗi ngôn ngữ Anh/Việt)
+    // 1. Mở lại công tắc gốc nếu Apple ẩn do máy không có màn LTPO
     BOOL hasAOD = NO;
     BOOL hasWallpaper = NO;
     BOOL hasNotifications = NO;
@@ -1252,23 +1251,17 @@ static void AODInjectIntoList(PSListController *list) {
         SEL getter = (SEL)[[s propertyForKey:@"getter"] pointerValue];
         NSString *getterStr = getter ? NSStringFromSelector(getter) : @"";
 
-        if ([specID isEqualToString:@"ALWAYS_ON_DISPLAY_ENABLED"] || 
-            [getterStr containsString:@"isAlwaysOnEnabled"]) {
+        if ([specID isEqualToString:@"ALWAYS_ON_DISPLAY_ENABLED"] || [getterStr containsString:@"isAlwaysOnEnabled"]) {
             hasAOD = YES;
         }
-        if ([specID isEqualToString:@"SHOW_WALLPAPER"] || 
-            [getterStr containsString:@"ShowWallpaper"] || 
-            [getterStr containsString:@"showWallpaper"]) {
+        if ([specID isEqualToString:@"SHOW_WALLPAPER"] || [getterStr containsString:@"ShowWallpaper"] || [getterStr containsString:@"showWallpaper"]) {
             hasWallpaper = YES;
         }
-        if ([specID isEqualToString:@"SHOW_NOTIFICATIONS"] || 
-            [getterStr containsString:@"ShowNotifications"] || 
-            [getterStr containsString:@"showNotifications"]) {
+        if ([specID isEqualToString:@"SHOW_NOTIFICATIONS"] || [getterStr containsString:@"ShowNotifications"] || [getterStr containsString:@"showNotifications"]) {
             hasNotifications = YES;
         }
     }
 
-    // 2. Chỉ nạp bổ sung nếu Apple thực sự ẩn specifier do thiếu phần cứng LTPO
     if (!hasAOD && [self respondsToSelector:@selector(_alwaysOnDisplaySpecifier)]) {
         PSSpecifier *s = [self _alwaysOnDisplaySpecifier];
         if (s) [specs insertObject:s atIndex:0];
@@ -1278,7 +1271,7 @@ static void AODInjectIntoList(PSListController *list) {
         if (s) [specs addObject:s];
     }
 
-    // 3. Chèn công tắc Blur Wallpaper Photo ngay bên dưới công tắc Wallpaper
+    // 2. Chèn công tắc Blur Wallpaper Photo ngay bên dưới công tắc Hiện hình nền (Cell 6: PSSwitchCell)
     BOOL hasBlur = NO;
     for (PSSpecifier *s in specs) {
         if ([[s propertyForKey:@"id"] isEqualToString:kAODBlurID]) {
@@ -1288,12 +1281,12 @@ static void AODInjectIntoList(PSListController *list) {
     }
 
     if (!hasBlur) {
-        PSSpecifier *blurSwitch = [%c(PSSpecifier) preferenceSpecifierNamed:@"Làm mờ ảnh nền (Blur Wallpaper)"
-                                                                    target:self 
-                                                                       set:@selector(setBlurWallpaper:spec:) 
-                                                                       get:@selector(getBlurWallpaper:) 
-                                                                    detail:Nil 
-                                                                      cell:6 
+        PSSpecifier *blurSwitch = [%c(PSSpecifier) preferenceSpecifierNamed:@"Blur Wallpaper Photo"
+                                                                    target:self
+                                                                       set:@selector(setBlurWallpaper:spec:)
+                                                                       get:@selector(getBlurWallpaper:)
+                                                                    detail:Nil
+                                                                      cell:6
                                                                       edit:Nil];
         [blurSwitch setProperty:kAODBlurID forKey:@"id"];
 
@@ -1303,13 +1296,13 @@ static void AODInjectIntoList(PSListController *list) {
             NSString *curID = [cur propertyForKey:@"id"];
             SEL curGetter = (SEL)[[cur propertyForKey:@"getter"] pointerValue];
             NSString *getterName = curGetter ? NSStringFromSelector(curGetter) : @"";
-            
+
             if ([curID isEqualToString:@"SHOW_WALLPAPER"] || [getterName containsString:@"Wallpaper"]) {
                 wallpaperIdx = i;
                 break;
             }
         }
-        
+
         if (wallpaperIdx >= 0 && (wallpaperIdx + 1) <= (NSInteger)specs.count) {
             [specs insertObject:blurSwitch atIndex:wallpaperIdx + 1];
         } else {
@@ -1317,41 +1310,28 @@ static void AODInjectIntoList(PSListController *list) {
         }
     }
 
-    // 4. Bổ sung công tắc Show Notifications nếu bị ẩn
     if (!hasNotifications && [self respondsToSelector:@selector(_showNotificationsSpecifier)]) {
         PSSpecifier *s = [self _showNotificationsSpecifier];
         if (s) [specs addObject:s];
     }
 
-    // 5. Nạp nhóm Cấu hình phần cứng tầng sâu (Slider 2-30 Hz và Độ sáng)
-    BOOL hasHardwareGroup = NO;
+    // 3. Nhóm Cấu hình phần cứng tầng sâu (Dùng cell 0: PSGroupCell chuẩn, không bị lỗi Clang)
+    BOOL hasHardware = NO;
     for (PSSpecifier *s in specs) {
         if ([[s propertyForKey:@"id"] isEqualToString:kAODHzID]) {
-            hasHardwareGroup = YES;
+            hasHardware = YES;
             break;
         }
     }
 
-    if (!hasHardwareGroup) {
-        // SỬA LẠI CHUẨN PREFERENCES CELL 0:
+    if (!hasHardware) {
         PSSpecifier *group = [%c(PSSpecifier) preferenceSpecifierNamed:@"CẤU HÌNH PHẦN CỨNG TẦNG SÂU (2-30)"
-                                                       target:self 
-                                                          set:NULL 
-                                                          get:NULL 
-                                                       detail:Nil 
-                                                         cell:0 
-                                                         edit:Nil];
-
+                                                               target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
         [group setProperty:@"Ép phần cứng hạ xung nhịp và độ sáng xuống mức tối thiểu khi khóa màn hình." forKey:@"footerText"];
         [specs addObject:group];
 
         PSSpecifier *hzSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Tần số quét tĩnh (2-30 Hz)"
-                                                                   target:self 
-                                                                      set:@selector(setCustomHz:spec:) 
-                                                                      get:@selector(getCustomHz:) 
-                                                                   detail:Nil 
-                                                                     cell:5 
-                                                                     edit:Nil];
+                                                                   target:self set:@selector(setCustomHz:spec:) get:@selector(getCustomHz:) detail:Nil cell:5 edit:Nil];
         [hzSlider setProperty:kAODHzID forKey:@"id"];
         [hzSlider setProperty:@(2.0f) forKey:@"min"];
         [hzSlider setProperty:@(30.0f) forKey:@"max"];
@@ -1359,12 +1339,7 @@ static void AODInjectIntoList(PSListController *list) {
         [specs addObject:hzSlider];
 
         PSSpecifier *brightSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Độ sáng AOD (Mức 1-30)"
-                                                                       target:self 
-                                                                          set:@selector(setCustomBrightness:spec:) 
-                                                                          get:@selector(getCustomBrightness:) 
-                                                                       detail:Nil 
-                                                                         cell:5 
-                                                                         edit:Nil];
+                                                                       target:self set:@selector(setCustomBrightness:spec:) get:@selector(getCustomBrightness:) detail:Nil cell:5 edit:Nil];
         [brightSlider setProperty:kAODBrightID forKey:@"id"];
         [brightSlider setProperty:@(1.0f) forKey:@"min"];
         [brightSlider setProperty:@(30.0f) forKey:@"max"];
@@ -1385,7 +1360,9 @@ static void AODInjectIntoList(PSListController *list) {
 }
 
 %new
-- (id)getBlurWallpaper:(PSSpecifier *)spec { return @(isBlurWallpaperEnabled()); }
+- (id)getBlurWallpaper:(PSSpecifier *)spec { 
+    return @(isBlurWallpaperEnabled()); 
+}
 
 %new
 - (void)setCustomHz:(id)value spec:(PSSpecifier *)spec {
@@ -1410,6 +1387,7 @@ static void AODInjectIntoList(PSListController *list) {
 %end
 
 %end // Group_Preferences
+
 
 //==============================================================
 // 6. KHỞI TẠO TIẾN TRÌNH
