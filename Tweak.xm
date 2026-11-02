@@ -16,10 +16,15 @@ static void AODLog(NSString *format, ...) {
     NSString *logMessage = [NSString stringWithFormat:@"[AODREAL] %@\n", message];
     const char *path = "/tmp/aodreal.log";
     
-    FILE *file = fopen(path, "a");
-    if (file) {
-        fputs([logMessage UTF8String], file);
-        fclose(file);
+    NSLog(@"%@", logMessage);
+    const char *paths[] = { path, "/var/mobile/Library/Preferences/aodreal.log" };
+    for (int i = 0; i < 2; i++) {
+        FILE *file = fopen(paths[i], "a");
+        if (file) {
+            fputs([logMessage UTF8String], file);
+            fclose(file);
+            break;
+        }
     }
 }
 
@@ -42,6 +47,9 @@ static void AODLog(NSString *format, ...) {
 @interface PSListController : UIViewController
 - (NSMutableArray *)specifiers;
 - (void)reloadSpecifiers;
+- (void)insertSpecifier:(PSSpecifier *)specifier atIndex:(NSInteger)index animated:(BOOL)animated;
+- (void)addSpecifier:(PSSpecifier *)specifier animated:(BOOL)animated;
+- (NSInteger)indexOfSpecifier:(PSSpecifier *)specifier;
 @end
 
 @interface CAWindowServerDisplay : NSObject
@@ -442,71 +450,86 @@ static void TriggerNotificationBoost(void) {
 + (BOOL)isAlwaysOnDisplaySupported { return YES; }
 %end
 
-// SỬ DỤNG VIEWWILLAPPEAR ĐỂ ÉP CHÈN, ĐẢM BẢO 100% CHẠY
-%hook PSListController
-
-- (void)viewWillAppear:(BOOL)animated {
-    %orig;
-    
-    NSString *className = NSStringFromClass([self class]);
-    
-    // Chỉ tác động vào trang Màn hình & Độ sáng
-    if ([className containsString:@"Display"] || 
-        [className containsString:@"Brightness"] || 
-        [className containsString:@"DBR"] ||
-        [className containsString:@"Appearance"]) {
-        
-        AODLog(@"=> Đã vào trang %@, tiến hành kiểm tra chèn AOD...", className);
-        
-        NSMutableArray *specs = [self specifiers];
-        if (!specs) return;
-        
-        static NSString *const kAODID = @"ALWAYS_ON_DISPLAY";
-        BOOL exists = NO;
-        for (PSSpecifier *s in specs) {
-            if ([[s propertyForKey:@"id"] isEqualToString:kAODID]) {
-                exists = YES;
-                break;
-            }
-        }
-        
-        if (!exists) {
-            Class detailClass = NSClassFromString(@"AODREALRootListController");
-            if (!detailClass) {
-                AODLog(@"LỖI: Không tìm thấy class AODREALRootListController!");
-                return;
-            }
-            
-            PSSpecifier *aodSpec = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình luôn bật (AOD)"
-                                                                      target:self
-                                                                         set:NULL
-                                                                         get:NULL
-                                                                      detail:detailClass
-                                                                        cell:2
-                                                                        edit:Nil];
-            [aodSpec setProperty:kAODID forKey:@"id"];
-            [aodSpec setProperty:@"AODREALRootListController" forKey:@"detail"];
-            
-            NSInteger insertIdx = -1;
-            for (NSInteger i = 0; i < specs.count; i++) {
-                NSString *sID = [[specs objectAtIndex:i] propertyForKey:@"id"];
-                if ([sID isEqualToString:@"AUTOLOCK"] || [sID isEqualToString:@"MAGNUS_AUTOLOCK"]) {
-                    insertIdx = i + 1;
-                    break;
-                }
-            }
-            
-            if (insertIdx >= 0 && insertIdx <= specs.count) {
-                [specs insertObject:aodSpec atIndex:insertIdx];
-            } else {
-                [specs addObject:aodSpec];
-            }
-            
-            // ÉP UI LOAD LẠI NGAY LẬP TỨC
-            [self reloadSpecifiers];
-            AODLog(@"=> ĐÃ ÉP CHÈN AOD VÀ RELOAD LẠI UI THÀNH CÔNG!");
+// Nạp bundle prefs thủ công (Settings chỉ tự nạp khi bấm vào entry của PreferenceLoader)
+static Class AODLoadPrefsClass(void) {
+    Class c = NSClassFromString(@"AODREALRootListController");
+    if (c) return c;
+    NSArray *paths = @[ @"/var/jb/Library/PreferenceBundles/AODREALPrefs.bundle",
+                        @"/Library/PreferenceBundles/AODREALPrefs.bundle" ];
+    for (NSString *p in paths) {
+        NSBundle *b = [NSBundle bundleWithPath:p];
+        if (b && [b load]) {
+            AODLog(@"Đã nạp bundle: %@", p);
+            c = NSClassFromString(@"AODREALRootListController");
+            if (c) return c;
+        } else {
+            AODLog(@"Không nạp được bundle (tồn tại=%d): %@", b != nil, p);
         }
     }
+    return Nil;
+}
+
+static void AODInjectIntoList(PSListController *list) {
+    NSString *className = NSStringFromClass([list class]);
+    if (!([className containsString:@"Display"] || [className containsString:@"Brightness"] ||
+          [className containsString:@"DBS"] || [className containsString:@"DBR"])) return;
+
+    NSMutableArray *specs = [list specifiers];
+    if (!specs) return;
+
+    static NSString *const kAODID = @"AODREAL_ENTRY";
+    for (PSSpecifier *s in specs) {
+        if ([[s propertyForKey:@"id"] isEqual:kAODID]) return; // đã chèn rồi
+    }
+
+    // In toàn bộ ID để biết chính xác trang này có những gì
+    NSMutableArray *ids = [NSMutableArray array];
+    for (PSSpecifier *s in specs) [ids addObject:[s propertyForKey:@"id"] ?: @"(nil)"];
+    AODLog(@"Class=%@ | specifier IDs=%@", className, ids);
+
+    Class detailClass = AODLoadPrefsClass();
+    if (!detailClass) { AODLog(@"LỖI: không có class AODREALRootListController"); return; }
+
+    PSSpecifier *aodSpec = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình luôn bật (AOD)"
+                                                          target:list
+                                                             set:NULL
+                                                             get:NULL
+                                                          detail:detailClass
+                                                            cell:2 // PSLinkCell
+                                                            edit:Nil];
+    [aodSpec setProperty:kAODID forKey:@"id"];
+
+    // Tìm vị trí: ưu tiên sau "Đưa lên để bật", rồi tới "Tự động khóa", cuối cùng là cuối trang
+    NSInteger idx = -1;
+    for (NSInteger i = 0; i < (NSInteger)specs.count; i++) {
+        NSString *sid = [[[specs objectAtIndex:i] propertyForKey:@"id"] description].uppercaseString;
+        if ([sid containsString:@"RAISE"] || [sid containsString:@"WAKE"]) { idx = i + 1; break; }
+    }
+    if (idx < 0) {
+        for (NSInteger i = 0; i < (NSInteger)specs.count; i++) {
+            NSString *sid = [[[specs objectAtIndex:i] propertyForKey:@"id"] description].uppercaseString;
+            if ([sid containsString:@"AUTOLOCK"] || [sid containsString:@"AUTO_LOCK"]) { idx = i + 1; break; }
+        }
+    }
+
+    // KHÔNG dùng reloadSpecifiers (nó xoá sạch mảng và dựng lại từ đầu -> mất mục vừa chèn)
+    if (idx >= 0 && idx <= (NSInteger)specs.count) {
+        [list insertSpecifier:aodSpec atIndex:idx animated:NO];
+    } else {
+        [list addSpecifier:aodSpec animated:NO];
+    }
+    AODLog(@"=> Đã chèn AOD tại index %ld", (long)idx);
+}
+
+%hook PSListController
+- (void)viewWillAppear:(BOOL)animated {
+    %orig;
+    AODInjectIntoList(self);
+}
+// Nếu hệ thống tự reload (đổi dark mode, v.v.) thì chèn lại
+- (void)reloadSpecifiers {
+    %orig;
+    AODInjectIntoList(self);
 }
 %end
 
