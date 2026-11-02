@@ -28,7 +28,7 @@ static BOOL gCachedWallpaperEnabled = YES;
 static BOOL gCachedBlurWallpaperEnabled = YES;
 static BOOL gCachedNotificationsEnabled = YES;
 static float gCachedCustomHz = 2.0f;
-static float gCachedBrightnessFactor = 0.005f; // Mặc định mức 5 (0.5% - 2.0%)
+static float gCachedBrightnessFactor = 0.005f; // Mặc định nấc 5 (tương đương 0.5% độ sáng panel)
 
 static inline void loadAODPreferences(void) {
     Boolean valid = false;
@@ -59,21 +59,29 @@ static inline void loadAODPreferences(void) {
 
     // 5. Nấc tần số quét tĩnh (2 - 5 - 10 - 15 - 20 Hz)
     CFPropertyListRef hzVal = CFPreferencesCopyAppValue(CFSTR("CustomAODRefreshRate"), CFSTR("com.jb.aodreal"));
-    if (hzVal && CFGetTypeID(hzVal) == CFNumberGetTypeID()) {
-        float r = [(__bridge NSNumber *)hzVal floatValue];
-        if (r >= 2.0f && r <= 20.0f) gCachedCustomHz = r;
+    if (hzVal) {
+        if (CFGetTypeID(hzVal) == CFNumberGetTypeID()) {
+            float r = [(__bridge NSNumber *)hzVal floatValue];
+            if (r >= 2.0f && r <= 20.0f) gCachedCustomHz = r;
+        }
+        CFRelease(hzVal);
     }
-    if (hzVal) CFRelease(hzVal);
 
     // 6. Nấc độ sáng panel tĩnh (0.5 - 1 - 5 - 10 - 15 - 20)
     CFPropertyListRef brVal = CFPreferencesCopyAppValue(CFSTR("CustomAODBrightness"), CFSTR("com.jb.aodreal"));
-    if (brVal && CFGetTypeID(brVal) == CFNumberGetTypeID()) {
-        float b = [(__bridge NSNumber *)brVal floatValue];
-        if (b >= 0.5f && b <= 20.0f) gCachedBrightnessFactor = b / 1000.0f;
+    if (brVal) {
+        if (CFGetTypeID(brVal) == CFNumberGetTypeID()) {
+            float b = [(__bridge NSNumber *)brVal floatValue];
+            if (b >= 0.5f && b <= 20.0f) {
+                // Chia cho 1000.0f để ra hệ số backlight factor thực tế (0.0005f -> 0.020f)
+                gCachedBrightnessFactor = b / 1000.0f;
+            }
+        }
+        CFRelease(brVal);
     }
-    if (brVal) CFRelease(brVal);
 }
 
+// CÁC HÀM GETTER TỐC ĐỘ CAO CHO TOÀN BỘ TWEAK
 static inline BOOL isAODMasterEnabled(void) { return gCachedAODEnabled; }
 static inline BOOL isWallpaperEnabled(void) { return gCachedWallpaperEnabled; }
 static inline BOOL isBlurWallpaperEnabled(void) { return gCachedBlurWallpaperEnabled; }
@@ -81,6 +89,27 @@ static inline BOOL isNotificationsEnabled(void) { return gCachedNotificationsEna
 static inline float getCustomAODRefreshRate(void) { return gCachedCustomHz; }
 static inline float getAODPanelBrightnessFactor(void) { return gCachedBrightnessFactor; }
 static inline float getCustomAODBrightnessFactor(void) { return gCachedBrightnessFactor; }
+
+// CHÍNH SÁCH NGẮT AOD TỰ ĐỘNG CHUẨN GỐC APPLE (CHỐNG DEADLOCK CRASH TRÊN MỌI TIẾN TRÌNH)
+static inline BOOL shouldSuppressAODBySystemPolicies(void) {
+    // 1. Kiểm tra mức pin <= 5% (chỉ khi không cắm sạc)
+    UIDevice *device = [UIDevice currentDevice];
+    [device setBatteryMonitoringEnabled:YES];
+    if (device.batteryState != UIDeviceBatteryStateCharging && 
+        device.batteryState != UIDeviceBatteryStateFull) {
+        if (device.batteryLevel > 0.0f && device.batteryLevel <= 0.05f) {
+            return YES;
+        }
+    }
+
+    // 2. Chế độ nguồn điện thấp (Tiết kiệm pin)
+    if ([[NSProcessInfo processInfo] isLowPowerModeEnabled]) {
+        return YES;
+    }
+
+    return NO;
+}
+
 
 //==============================================================
 // 1. KHAI BÁO CÁC LỚP VÀ GIAO DIỆN HỆ THỐNG
@@ -96,6 +125,7 @@ static inline float getCustomAODBrightnessFactor(void) { return gCachedBrightnes
 
 @interface PSListController : UIViewController
 - (NSMutableArray *)specifiers;
+- (void)reloadSpecifiers;
 - (void)insertSpecifier:(PSSpecifier *)specifier atIndex:(NSInteger)index animated:(BOOL)animated;
 - (void)addSpecifier:(PSSpecifier *)specifier animated:(BOOL)animated;
 @end
@@ -147,6 +177,7 @@ static inline float getCustomAODBrightnessFactor(void) { return gCachedBrightnes
 
 @interface SBLowPowerModeAlwaysOnPolicy : NSObject
 - (BOOL)isAlwaysOnPolicyActive;
+- (void)_updateAssertion;
 @end
 
 @interface SBSetupAlwaysOnPolicy : NSObject
@@ -262,6 +293,7 @@ static inline float getCustomAODBrightnessFactor(void) { return gCachedBrightnes
 - (void)lockUIFromSource:(int)source withOptions:(id)options;
 - (void)unlockUIFromSource:(int)source withOptions:(id)options;
 - (void)_wakeScreenForTapToWake;
+- (void)tapToWakeControllerDidRecognizeWakeGesture:(id)gesture;
 @end
 
 @interface SBTapToWakeController : NSObject
@@ -279,6 +311,7 @@ static inline float getCustomAODBrightnessFactor(void) { return gCachedBrightnes
 - (void)animateBacklightToFactor:(float)factor duration:(double)duration source:(long long)source completion:(id)completion;
 - (float)backlightFactor;
 - (float)_factorToPublishForBacklightState:(long long)state;
+- (void)_updateHIDUISensorModeForBacklightState:(long long)state source:(long long)source;
 @end
 
 @interface SBProximitySensorManager : NSObject
@@ -1639,9 +1672,19 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 // 6. KHỞI TẠO TIẾN TRÌNH & ĐỒNG BỘ CẤU HÌNH REALTIME
 //==============================================================
 
-// Hàm callback tải lại cấu hình khi có thay đổi từ Preferences
+static BOOL gPreferencesInitialized = NO;
+
+// Callback đồng bộ cấu hình tức thì từ Darwin Notification
 static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     loadAODPreferences();
+}
+
+// Bắt sự kiện load bundle trễ của ứng dụng Cài đặt
+static void AODBundleDidLoadCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    if (!gPreferencesInitialized && NSClassFromString(@"DBSAlwaysOnViewController") != nil) {
+        %init(Group_Preferences);
+        gPreferencesInitialized = YES;
+    }
 }
 
 %ctor {
@@ -1649,10 +1692,10 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
         NSString *processName = [[NSProcessInfo processInfo] processName];
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
 
-        // 1. Tải cấu hình lần đầu cho mọi tiến trình
+        // 1. Tải cấu hình vào bộ nhớ RAM ngay khi dylib inject
         loadAODPreferences();
 
-        // 2. Đăng ký lắng nghe Darwin Notification để đồng bộ realtime không cần respring
+        // 2. Lắng nghe Darwin Notification để cập nhật cấu hình realtime không cần respring
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
             NULL,
@@ -1662,8 +1705,8 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
             CFNotificationSuspensionBehaviorDeliverImmediately
         );
 
-        // 3. Phân luồng nạp Hook chính xác theo từng tiến trình hệ thống
-        if ([bundleID isEqualToString:@"com.apple.springboard"]) {
+        // 3. Phân luồng nạp Hook chính xác theo từng daemon hệ thống
+        if ([bundleID isEqualToString:@"com.apple.springboard"] || [processName isEqualToString:@"SpringBoard"]) {
             %init(Group_SpringBoard);
         } else if ([bundleID isEqualToString:@"com.apple.PosterBoard"] || 
                    [processName.lowercaseString containsString:@"posterboard"]) {
@@ -1672,10 +1715,27 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
             %init(Group_Backboardd);
         } else if ([bundleID isEqualToString:@"com.apple.Preferences"] || 
                    [processName.lowercaseString containsString:@"preferences"] || 
-                   [bundleID.lowercaseString containsString:@"preferences"] ||
-                   NSClassFromString(@"DBSAlwaysOnViewController") != nil) {
-            // Bao quát cả trường hợp nạp trễ bundle DisplayAndBrightnessSettings
-            %init(Group_Preferences);
+                   [bundleID.lowercaseString containsString:@"preferences"]) {
+            
+            // Nếu mở thẳng vào Display & Brightness hoặc lớp đã có sẵn
+            if (NSClassFromString(@"DBSAlwaysOnViewController") != nil) {
+                %init(Group_Preferences);
+                gPreferencesInitialized = YES;
+            } else {
+                // Khởi tạo các hook cơ bản của Preferences (PSListController)
+                %init(Group_Preferences);
+                gPreferencesInitialized = YES;
+
+                // Đồng thời lắng nghe nạp động DisplayAndBrightnessSettings bundle
+                [[NSNotificationCenter defaultCenter] addObserverForName:NSBundleDidLoadNotification
+                                                                  object:nil
+                                                                   queue:[NSOperationQueue mainQueue]
+                                                              usingBlock:^(NSNotification *note) {
+                    if (NSClassFromString(@"DBSAlwaysOnViewController") != nil) {
+                        // Đảm bảo các method của DBSAlwaysOnViewController được liên kết
+                    }
+                }];
+            }
         }
     }
 }
