@@ -19,11 +19,13 @@
 }
 
 //==============================================================
-// ĐỌC / GHI CẤU HÌNH CHO SWITCH & SLIDERS (ĐỒNG BỘ COM.JB.AODREAL)
+// ĐỌC / GHI CẤU HÌNH (ĐÃ FIX LỖI KIỂU DỮ LIỆU)
 //==============================================================
 
 - (id)readPreferenceValue:(PSSpecifier *)specifier {
     NSString *key = [specifier propertyForKey:@"key"];
+    if (!key) return nil;
+    
     NSString *domain = [specifier propertyForKey:@"defaults"] ?: @"com.jb.aodreal";
     
     CFPropertyListRef val = CFPreferencesCopyAppValue((__bridge CFStringRef)key, (__bridge CFStringRef)domain);
@@ -35,11 +37,25 @@
 
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
     NSString *key = [specifier propertyForKey:@"key"];
+    if (!key) return;
+    
     NSString *domain = [specifier propertyForKey:@"defaults"] ?: @"com.jb.aodreal";
+    
+    // FIX: Ép giá trị thành NSNumber nếu key thuộc Slider để đồng bộ với Tweak.xm
+    id finalValue = value;
+    if ([key isEqualToString:@"CustomAODRefreshRate"] || 
+        [key isEqualToString:@"CustomAODBrightness"]) {
+        // Chuyển đổi an toàn từ NSString (nếu có) sang NSNumber
+        if ([value isKindOfClass:[NSString class]]) {
+            finalValue = @([value floatValue]);
+        } else if ([value isKindOfClass:[NSNumber class]]) {
+            finalValue = value;
+        }
+    }
     
     CFPreferencesSetAppValue(
         (__bridge CFStringRef)key,
-        (__bridge CFPropertyListRef)value,
+        (__bridge CFPropertyListRef)finalValue,
         (__bridge CFStringRef)domain
     );
     CFPreferencesAppSynchronize((__bridge CFStringRef)domain);
@@ -58,11 +74,11 @@
 }
 
 //==============================================================
-// XỬ LÝ RESPRING ĐA TẦNG AN TOÀN (DYNAMIC RUNTIME RESOLUTION)
+// XỬ LÝ RESPRING ĐA TẦNG AN TOÀN
 //==============================================================
 
 - (void)respring {
-    // Cách 1: Nạp động hàm C FBSSystemServiceRespring qua dlsym (không gây lỗi linker)
+    // Cách 1: Nạp động hàm C FBSSystemServiceRespring qua dlsym
     void (*dynamicRespring)(void) = (void (*)(void))dlsym(RTLD_DEFAULT, "FBSSystemServiceRespring");
     if (dynamicRespring) {
         dynamicRespring();
