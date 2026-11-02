@@ -692,22 +692,6 @@ static CSCoverSheetViewController *gCoverSheetVC = nil;
 static CSCombinedListViewController *gCombinedListVC = nil;
 static id gCachedFlipbookSpec = nil;
 
-// KIỂM TRA ĐIỀU KIỆN TỰ NGẮT AOD GỐC APPLE (PIN <= 5%, TIẾT KIỆM PIN)
-static inline BOOL shouldSuppressAODBySystemPolicies(void) {
-    UIDevice *device = [UIDevice currentDevice];
-    [device setBatteryMonitoringEnabled:YES];
-    if (device.batteryState != UIDeviceBatteryStateCharging && 
-        device.batteryState != UIDeviceBatteryStateFull) {
-        if (device.batteryLevel > 0.0f && device.batteryLevel <= 0.05f) {
-            return YES; // Pin <= 5% -> Ngắt hoàn toàn AOD
-        }
-    }
-    if ([[NSProcessInfo processInfo] isLowPowerModeEnabled]) {
-        return YES; // Bật Tiết kiệm pin -> Ngắt hoàn toàn AOD
-    }
-    return NO;
-}
-
 // -------------------------------------------------------------
 // COVERSHEET: ĐIỀU PHỐI AOD, NỀN VÀ HIỆU ỨNG CHUYỂN CẢNH MƯỢT
 // -------------------------------------------------------------
