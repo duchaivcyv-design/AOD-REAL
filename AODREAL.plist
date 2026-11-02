@@ -4,8 +4,13 @@
             "com.apple.Preferences",
             "com.apple.DisplayAndBrightnessSettings",
             "com.apple.springboard",
+            "com.apple.PosterBoard",
+            "com.apple.BacklightServices",
             "com.apple.BacklightServicesHost"
         );
-        Executables = ( "backboardd" );
+        Executables = (
+            "backboardd",
+            "PosterBoard"
+        );
     };
 }
