@@ -4,13 +4,14 @@
 <dict>
     <key>items</key>
     <array>
+        <!-- NHÓM CÔNG TẮC CHÍNH -->
         <dict>
             <key>cell</key>
             <string>PSGroupCell</string>
             <key>label</key>
-            <string>AOD REAL Settings</string>
+            <string>Cấu hình tổng</string>
             <key>footerText</key>
-            <string>Chỉ hoạt động trên iOS 16/18.0 (iPhone 8/XMS Max). iOS 15 không có engine AOD gốc.</string>
+            <string>Ép kích hoạt Always-On Display gốc và nạp chuỗi điều phối xung nhịp tầng sâu.</string>
         </dict>
         <dict>
             <key>cell</key>
@@ -26,17 +27,79 @@
             <key>PostNotification</key>
             <string>com.jb.aodreal/preferences.changed</string>
         </dict>
+
+        <!-- NHÓM CẤU HÌNH TẦN SỐ QUÉT (HZ / FPS) -->
         <dict>
             <key>cell</key>
             <string>PSGroupCell</string>
             <key>label</key>
-            <string>Actions</string>
+            <string>Tần số quét AOD tĩnh (2 - 20 Hz)</string>
+            <key>footerText</key>
+            <string>Khóa khung hình render ở mức cực thấp khi màn hình khóa tĩnh. Khi có thông báo đến, xung nhịp tự động bung lên 50 Hz trong 3.5 giây rồi hạ về mức này.</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSliderCell</string>
+            <key>defaults</key>
+            <string>com.jb.aodreal</string>
+            <key>key</key>
+            <string>CustomAODRefreshRate</string>
+            <key>min</key>
+            <real>2.0</real>
+            <key>max</key>
+            <real>20.0</real>
+            <key>default</key>
+            <real>2.0</real>
+            <key>showValue</key>
+            <true/>
+            <key>isSegmented</key>
+            <false/>
+            <key>PostNotification</key>
+            <string>com.jb.aodreal/preferences.changed</string>
+        </dict>
+
+        <!-- NHÓM CẤU HÌNH ĐỘ SÁNG MÀN HÌNH -->
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>Độ sáng nền AOD (Mức 2 - 20)</string>
+            <key>footerText</key>
+            <string>Mức 2 tương đương ~0.2% độ sáng phần cứng (rất tối trong bóng đêm). Mức 20 tương đương ~2.0% độ sáng.</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSliderCell</string>
+            <key>defaults</key>
+            <string>com.jb.aodreal</string>
+            <key>key</key>
+            <string>CustomAODBrightness</string>
+            <key>min</key>
+            <real>2.0</real>
+            <key>max</key>
+            <real>20.0</real>
+            <key>default</key>
+            <real>5.0</real>
+            <key>showValue</key>
+            <true/>
+            <key>isSegmented</key>
+            <false/>
+            <key>PostNotification</key>
+            <string>com.jb.aodreal/preferences.changed</string>
+        </dict>
+
+        <!-- NHÓM HÀNH ĐỘNG -->
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>Hành động</string>
         </dict>
         <dict>
             <key>cell</key>
             <string>PSButtonCell</string>
             <key>label</key>
-            <string>Respring (áp dụng thay đổi)</string>
+            <string>Respring (Áp dụng thay đổi)</string>
             <key>action</key>
             <string>respring</string>
         </dict>
