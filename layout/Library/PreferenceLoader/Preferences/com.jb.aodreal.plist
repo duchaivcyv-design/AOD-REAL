@@ -1,9 +1,19 @@
-{
-    entry = {
-        bundle = "AODREALPrefs";
-        cell = PSLinkCell;
-        detail = "AODREALRootListController";
-        icon = "icon.png";
-        label = "AOD REAL";
-    };
-}
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>entry</key>
+    <dict>
+        <key>bundle</key>
+        <string>AODREALPrefs</string>
+        <key>cell</key>
+        <string>PSLinkCell</string>
+        <key>isController</key>
+        <true/>
+        <key>label</key>
+        <string>AOD REAL</string>
+        <key>icon</key>
+        <string>icon.png</string>
+    </dict>
+</dict>
+</plist>
