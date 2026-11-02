@@ -490,14 +490,6 @@ static void TriggerNotificationBoost(void) {
 // 5. TẦNG 5: GIAO DIỆN CÀI ĐẶT AOD GỐC APPLE (ĐÃ SỬA CHỐNG CRASH)
 //==============================================================
 
-@interface DBSAlwaysOnViewController : PSListController
-- (PSSpecifier *)_alwaysOnDisplaySpecifier;
-- (PSSpecifier *)_showWallpaperSpecifier;
-- (PSSpecifier *)_showNotificationsSpecifier;
-- (id)isAlwaysOnEnabled:(PSSpecifier *)specifier;
-- (void)setAlwaysOnDisplayEnabled:(id)value specifier:(PSSpecifier *)specifier;
-@end
-
 %group Group_Preferences
 
 %hook BLSBacklight
