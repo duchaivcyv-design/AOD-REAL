@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    name: Build .deb and Repo
+    name: Build .deb
     runs-on: ubuntu-latest
 
     steps:
@@ -25,9 +25,7 @@ jobs:
           CI: 1
         run: |
           export THEOS="$THEOS"
-          # CI=1 tránh nhắc nhập mật khẩu; sed thay thế libxml2 bằng libxml2-dev để tương thích Ubuntu 26.04
           bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos | sed 's/ libxml2/ libxml2-dev/g')"
-          # Xác minh toolchain và SDK
           echo "=== Toolchain check ==="
           ls "$THEOS/toolchain/linux/iphone/bin/clang"
           echo "=== SDKs check ==="
@@ -40,36 +38,9 @@ jobs:
           export PATH="$THEOS/bin:$PATH"
           make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
 
-      - name: Make Repository Files for Sileo & Find Deb
-        run: |
-          mkdir -p public/debs
-          
-          find . -name "*.deb" ! -path "./public/*" -exec cp -v {} public/debs/ \;
-          
-          if [ -z "$(ls -A public/debs)" ]; then
-             echo "Error: Không tìm thấy file .deb nào sau khi build!"
-             exit 1
-          fi
-          
-          cd public
-          dpkg-scanpackages -m debs /dev/null > Packages
-          bzip2 -9 -c Packages > Packages.bz2
-          zstd -c Packages > Packages.zst
-          
-          cat << 'EOF' > Release
-          Origin: AOD REAL Repo
-          Label: AOD REAL Repo
-          Suite: stable
-          Version: 1.0
-          Codename: ios
-          Architectures: iphoneos-arm64
-          Components: main
-          Description: Repository for AOD REAL Tweak
-          EOF
-          cd ..
-
-      - name: Upload Repository Artifact
+      - name: Upload .deb Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: repository
-          path: public/
+          name: AODREAL-deb
+          path: packages/*.deb
+          if-no-files-found: error
