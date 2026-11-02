@@ -1253,7 +1253,7 @@ static id gCachedFlipbookSpec = nil;
 }
 
 - (NSMutableArray *)specifiers {
-    // 1. Lấy mảng specifier gốc từ hệ thống
+    // 1. Lấy mảng specifiers gốc từ hệ thống (đã có sẵn đầy đủ các khối như ảnh 2)
     NSMutableArray *specs = %orig;
     if (!specs) specs = [NSMutableArray array];
 
@@ -1261,42 +1261,22 @@ static id gCachedFlipbookSpec = nil;
     static NSString *const kHzID = @"AOD_CUSTOM_HZ_KEY";
     static NSString *const kBrightID = @"AOD_CUSTOM_BRIGHTNESS_KEY";
 
-    // Kiểm tra xem đã build đầy đủ chưa, nếu có thanh trượt tầng sâu rồi thì trả về ngay (chống lặp)
+    // Kiểm tra chống lặp: nếu đã có thanh trượt tầng sâu rồi thì trả về ngay
     for (PSSpecifier *s in specs) {
         if ([[s propertyForKey:@"id"] isEqualToString:kHzID]) {
             return specs;
         }
     }
 
-    // 2. Mở lại công tắc tổng nếu bị ẩn do phần cứng
-    BOOL hasAOD = NO;
-    BOOL hasWallpaper = NO;
-    BOOL hasNoti = NO;
-
-    for (PSSpecifier *s in specs) {
-        NSString *sid = [s propertyForKey:@"id"];
-        if ([sid isEqualToString:@"ALWAYS_ON_DISPLAY_ENABLED"]) hasAOD = YES;
-        if ([sid isEqualToString:@"SHOW_WALLPAPER"]) hasWallpaper = YES;
-        if ([sid isEqualToString:@"SHOW_NOTIFICATIONS"]) hasNoti = YES;
-    }
-
-    if (!hasAOD && [self respondsToSelector:@selector(_alwaysOnDisplaySpecifier)]) {
-        PSSpecifier *s = [self _alwaysOnDisplaySpecifier];
-        if (s) [specs insertObject:s atIndex:0];
-    }
-    if (!hasWallpaper && [self respondsToSelector:@selector(_showWallpaperSpecifier)]) {
-        PSSpecifier *s = [self _showWallpaperSpecifier];
-        if (s) [specs addObject:s];
-    }
-
-    // 3. Chèn công tắc Blur Wallpaper Photo ngay bên dưới Show Wallpaper
+    // 2. CHÈN DUY NHẤT CÔNG TẮC "Blur Wallpaper Photo" NẰM GIỮA HÌNH NỀN VÀ THÔNG BÁO
     BOOL hasBlur = NO;
     for (PSSpecifier *s in specs) {
-        if ([[s propertyForKey:@"id"] isEqualToString:kBlurID]) {
+        if ([[s propertyForKey:@"id"] isEqualToString:kAODBlurID]) {
             hasBlur = YES;
             break;
         }
     }
+
     if (!hasBlur) {
         PSSpecifier *blurSwitch = [%c(PSSpecifier) preferenceSpecifierNamed:@"Blur Wallpaper Photo"
                                                                     target:self
@@ -1307,42 +1287,56 @@ static id gCachedFlipbookSpec = nil;
                                                                       edit:Nil];
         [blurSwitch setProperty:kBlurID forKey:@"id"];
 
-        NSInteger wpIdx = -1;
+        // Tìm đúng vị trí của "Hiển thị hình nền" để chèn ngay sau nó
+        NSInteger wpIndex = -1;
         for (NSInteger i = 0; i < (NSInteger)specs.count; i++) {
-            NSString *sid = [[specs objectAtIndex:i] propertyForKey:@"id"];
-            if ([sid isEqualToString:@"SHOW_WALLPAPER"]) {
-                wpIdx = i;
+            PSSpecifier *s = [specs objectAtIndex:i];
+            NSString *sid = [[s propertyForKey:@"id"] description];
+            SEL getter = (SEL)[[s propertyForKey:@"getter"] pointerValue];
+            NSString *getterStr = getter ? NSStringFromSelector(getter) : @"";
+
+            if ([sid isEqualToString:@"SHOW_WALLPAPER"] || [getterStr containsString:@"Wallpaper"] || [getterStr containsString:@"wallpaper"]) {
+                wpIndex = i;
                 break;
             }
         }
-        if (wpIdx >= 0 && (wpIdx + 1) <= (NSInteger)specs.count) {
-            [specs insertObject:blurSwitch atIndex:wpIdx + 1];
-        } else {
-            [specs addObject:blurSwitch];
+
+        if (wpIndex >= 0 && (wpIndex + 1) <= (NSInteger)specs.count) {
+            [specs insertObject:blurSwitch atIndex:wpIndex + 1];
         }
     }
 
-    if (!hasNoti && [self respondsToSelector:@selector(_showNotificationsSpecifier)]) {
-        PSSpecifier *s = [self _showNotificationsSpecifier];
-        if (s) [specs addObject:s];
-    }
-
-    // 4. Chèn nhóm Cấu hình phần cứng tầng sâu (Dùng cell:0 PSGroupCell tránh lỗi Clang)
+    // 3. KHỐI CẤU HÌNH PHẦN CỨNG TẦNG SÂU (GIỮ NGUYÊN DƯỚI CÙNG NHƯ ẢNH 2)
     PSSpecifier *group = [%c(PSSpecifier) preferenceSpecifierNamed:@"TINH CHỈNH HZ FPS VÀ ĐỘ SÁNG (2-30)"
-                                                           target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
+                                                           target:self 
+                                                              set:NULL 
+                                                              get:NULL 
+                                                           detail:Nil 
+                                                             cell:0 
+                                                             edit:Nil];
     [group setProperty:@"1.Giảm tần số từ 2-30hz fps| 2. Giảm độ sáng cho AOD 1-30." forKey:@"footerText"];
     [specs addObject:group];
 
     PSSpecifier *hzSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Tần số quét tĩnh (2-30 Hz)"
-                                                               target:self set:@selector(setCustomHz:spec:) get:@selector(getCustomHz:) detail:Nil cell:5 edit:Nil];
+                                                               target:self 
+                                                                  set:@selector(setCustomHz:spec:) 
+                                                                  get:@selector(getCustomHz:) 
+                                                               detail:Nil 
+                                                                 cell:5 
+                                                                 edit:Nil];
     [hzSlider setProperty:kHzID forKey:@"id"];
     [hzSlider setProperty:@(2.0f) forKey:@"min"];
-    [hzSlider setProperty:@(20.0f) forKey:@"max"];
+    [hzSlider setProperty:@(30.0f) forKey:@"max"];
     [hzSlider setProperty:@YES forKey:@"showValue"];
     [specs addObject:hzSlider];
 
     PSSpecifier *brightSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Độ sáng AOD (Mức 1-30)"
-                                                                   target:self set:@selector(setCustomBrightness:spec:) get:@selector(getCustomBrightness:) detail:Nil cell:5 edit:Nil];
+                                                                   target:self 
+                                                                      set:@selector(setCustomBrightness:spec:) 
+                                                                      get:@selector(getCustomBrightness:) 
+                                                                   detail:Nil 
+                                                                     cell:5 
+                                                                     edit:Nil];
     [brightSlider setProperty:kBrightID forKey:@"id"];
     [brightSlider setProperty:@(1.0f) forKey:@"min"];
     [brightSlider setProperty:@(30.0f) forKey:@"max"];
