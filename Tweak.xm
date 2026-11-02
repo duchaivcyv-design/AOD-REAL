@@ -558,7 +558,7 @@ static void TriggerNotificationBoost(void) {
 %end // Group_PosterBoard
 
 //==============================================================
-// 5. TẦNG 5: GIAO DIỆN CÀI ĐẶT (ÉP CHÈN TRỰC TIẾP)
+// 5. TẦNG 5: GIAO DIỆN CÀI ĐẶT (ÉP CHÈN SIÊU CỨNG)
 //==============================================================
 
 %group Group_Preferences
@@ -572,178 +572,69 @@ static void TriggerNotificationBoost(void) {
 %end
 
 %hook CBDisplayModule
-- (BOOL)isAlwaysOnDisplaySupported { return YES; }
++ (BOOL)isAlwaysOnDisplaySupported { return YES; }
 %end
 
-// Ép cờ kiểm tra phần cứng VÀ chèn trực tiếp vào trang Màn hình & Độ sáng
-%hook DBRDisplayController
-
-- (BOOL)shouldShowAlwaysOnDisplay { return YES; }
-- (BOOL)shouldShowAlwaysOnDisplaySpecifier { return YES; }
-- (BOOL)isAlwaysOnDisplaySupported { return YES; }
+// Hook thẳng vào PSListController (lớp cha của MỌI trang cài đặt)
+%hook PSListController
 
 - (NSMutableArray *)specifiers {
     NSMutableArray *specs = %orig;
     if (!specs) return specs;
 
-    static NSString *const kAODID = @"ALWAYS_ON_DISPLAY";
+    // 1. Lấy tên class hiện tại để xác định xem có đúng là trang "Màn hình & Độ sáng" không
+    NSString *className = NSStringFromClass([self class]);
     
-    // 1. Kiểm tra tránh chèn trùng
-    for (PSSpecifier *s in specs) {
-        if ([[s propertyForKey:@"id"] isEqualToString:kAODID]) {
-            return specs;
+    // Chấp nhận mọi class có chữ "Display", "Brightness", "DBR" hoặc "Appearance"
+    if ([className containsString:@"Display"] || 
+        [className containsString:@"Brightness"] || 
+        [className containsString:@"DBR"] ||
+        [className containsString:@"Appearance"]) {
+        
+        static NSString *const kAODID = @"ALWAYS_ON_DISPLAY";
+        
+        // 2. Kiểm tra xem đã chèn chưa để tránh trùng lặp
+        for (PSSpecifier *s in specs) {
+            if ([[s propertyForKey:@"id"] isEqualToString:kAODID]) {
+                return specs;
+            }
+        }
+
+        // 3. Tạo Specifier (Ép cứng tên class AODREALRootListController của Preference Bundle)
+        PSSpecifier *aodSpec = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình luôn bật (AOD)"
+                                                                  target:self
+                                                                     set:NULL
+                                                                     get:NULL
+                                                                  detail:NSClassFromString(@"AODREALRootListController")
+                                                                    cell:2 // PSLinkCell (có mũi tên chuyển trang)
+                                                                    edit:Nil];
+        
+        [aodSpec setProperty:kAODID forKey:@"id"];
+        [aodSpec setProperty:@"AODREALRootListController" forKey:@"detail"]; // Trỏ đến class trong Bundle
+
+        // 4. Tìm vị trí ngay dưới "Tự động khóa" để chèn
+        NSInteger insertIdx = -1;
+        for (NSInteger i = 0; i < specs.count; i++) {
+            NSString *sID = [[specs objectAtIndex:i] propertyForKey:@"id"];
+            if ([sID isEqualToString:@"AUTOLOCK"] || 
+                [sID isEqualToString:@"MAGNUS_AUTOLOCK"] || 
+                [sID isEqualToString:@"RAISE_TO_WAKE"]) {
+                insertIdx = i + 1;
+                break;
+            }
+        }
+
+        if (insertIdx >= 0 && insertIdx <= specs.count) {
+            [specs insertObject:aodSpec atIndex:insertIdx];
+        } else {
+            [specs addObject:aodSpec]; // Nếu không tìm thấy mốc, chèn xuống cuối
         }
     }
-
-    // 2. Tìm class trang con
-    Class detailClass = NSClassFromString(@"DBRAlwaysOnDisplayDetailController") 
-                     ?: NSClassFromString(@"DBRAlwaysOnDisplayController")
-                     ?: NSClassFromString(@"AODREALRootListController");
-
-    // 3. Tạo Specifier liên kết
-    PSSpecifier *aodSpec = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình luôn bật"
-                                                              target:self
-                                                                 set:NULL
-                                                                 get:NULL
-                                                              detail:detailClass
-                                                                cell:2 // PSLinkCell
-                                                                edit:Nil];
-    [aodSpec setProperty:kAODID forKey:@"id"];
-    if (detailClass) {
-        [aodSpec setProperty:NSStringFromClass(detailClass) forKey:@"detail"];
-    }
-
-    // 4. Chèn vào ngay dưới mục "Tự động khóa"
-    NSInteger insertIdx = -1;
-    for (NSInteger i = 0; i < specs.count; i++) {
-        NSString *sID = [[specs objectAtIndex:i] propertyForKey:@"id"];
-        if ([sID isEqualToString:@"AUTOLOCK"] || 
-            [sID isEqualToString:@"MAGNUS_AUTOLOCK"] || 
-            [sID isEqualToString:@"RAISE_TO_WAKE"]) {
-            insertIdx = i + 1;
-            break;
-        }
-    }
-
-    if (insertIdx >= 0 && insertIdx <= specs.count) {
-        [specs insertObject:aodSpec atIndex:insertIdx];
-    } else {
-        [specs addObject:aodSpec];
-    }
-
     return specs;
 }
-%end
-
-// Tùy chỉnh Slider bên trong trang con AOD
-%hook DBRAlwaysOnDisplayDetailController
-
-- (BOOL)shouldShowAlwaysOnDisplaySpecifiers { return YES; }
-- (BOOL)isAlwaysOnDisplayEnabled { return isAODMasterEnabled(); }
-
-- (id)specifiers {
-    NSMutableArray *specs = %orig;
-    if (!specs) specs = [NSMutableArray array];
-
-    static NSString *const kAODHzID = @"AOD_CUSTOM_HZ_KEY";
-    for (PSSpecifier *s in specs) {
-        if ([[s propertyForKey:@"id"] isEqualToString:kAODHzID]) {
-            return specs;
-        }
-    }
-
-    PSSpecifier *group = [%c(PSSpecifier) preferenceSpecifierNamed:@"GIỚI HẠN PHẦN CỨNG AOD (2-20)"
-                                                           target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
-    [group setProperty:@"Ép phần cứng hạ tần số quét và độ sáng xuống tầng thấp nhất khi khóa màn hình." forKey:@"footerText"];
-
-    PSSpecifier *hzSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Tần số quét (2-20 Hz)"
-                                                               target:self
-                                                                  set:@selector(setCustomHz:spec:)
-                                                                  get:@selector(getCustomHz:)
-                                                               detail:Nil cell:5 edit:Nil];
-    [hzSlider setProperty:kAODHzID forKey:@"id"];
-    [hzSlider setProperty:@(2.0f) forKey:@"min"];
-    [hzSlider setProperty:@(20.0f) forKey:@"max"];
-    [hzSlider setProperty:@YES forKey:@"showValue"];
-
-    PSSpecifier *brightSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Độ sáng AOD (Mức 2-20)"
-                                                                   target:self
-                                                                      set:@selector(setCustomBrightness:spec:)
-                                                                      get:@selector(getCustomBrightness:)
-                                                                   detail:Nil cell:5 edit:Nil];
-    [brightSlider setProperty:@"AOD_CUSTOM_BRIGHTNESS_KEY" forKey:@"id"];
-    [brightSlider setProperty:@(2.0f) forKey:@"min"];
-    [brightSlider setProperty:@(20.0f) forKey:@"max"];
-    [brightSlider setProperty:@YES forKey:@"showValue"];
-
-    [specs addObject:group];
-    [specs addObject:hzSlider];
-    [specs addObject:brightSlider];
-
-    return specs;
-}
-
-%new
-- (void)setCustomHz:(id)value spec:(PSSpecifier *)spec {
-    float hz = [value floatValue]; // An toàn cho cả NSString và NSNumber
-    CFPreferencesSetAppValue(CFSTR("CustomAODRefreshRate"), (__bridge CFPropertyListRef)@(hz), CFSTR("com.jb.aodreal"));
-    CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
-    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
-}
-
-%new
-- (id)getCustomHz:(PSSpecifier *)spec {
-    return @(getCustomAODRefreshRate());
-}
-
-%new
-- (void)setCustomBrightness:(id)value spec:(PSSpecifier *)spec {
-    float bright = [value floatValue]; // An toàn cho cả NSString và NSNumber
-    CFPreferencesSetAppValue(CFSTR("CustomAODBrightness"), (__bridge CFPropertyListRef)@(bright), CFSTR("com.jb.aodreal"));
-    CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
-    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
-}
-
-%new
-- (id)getCustomBrightness:(PSSpecifier *)spec {
-    return @(getCustomAODBrightnessFactor() * 1000.0f);
-}
-
-- (id)alwaysOnDisplayEnabled:(PSSpecifier *)specifier {
-    return @(isAODMasterEnabled());
-}
-
-- (void)setAlwaysOnDisplayEnabled:(id)value specifier:(PSSpecifier *)specifier {
-    CFPreferencesSetAppValue(CFSTR("enabled"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
-    CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
-
-    CFPreferencesSetAppValue(CFSTR("AlwaysOnDisplayEnabled"), (__bridge CFPropertyListRef)(value), CFSTR("com.apple.BacklightServices"));
-    CFPreferencesAppSynchronize(CFSTR("com.apple.BacklightServices"));
-    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.apple.BacklightServices.AlwaysOnDisplayEnabled.changed"), NULL, NULL, YES);
-}
-
-- (id)showWallpaperEnabled:(PSSpecifier *)specifier {
-    return @(isWallpaperEnabled());
-}
-
-- (void)setShowWallpaperEnabled:(id)value specifier:(PSSpecifier *)specifier {
-    CFPreferencesSetAppValue(CFSTR("ShowWallpaperInAlwaysOn"), (__bridge CFPropertyListRef)(value), CFSTR("com.apple.BacklightServices"));
-    CFPreferencesAppSynchronize(CFSTR("com.apple.BacklightServices"));
-}
-
-- (id)showNotificationsEnabled:(PSSpecifier *)specifier {
-    return @(isNotificationsEnabled());
-}
-
-- (void)setShowNotificationsEnabled:(id)value specifier:(PSSpecifier *)specifier {
-    CFPreferencesSetAppValue(CFSTR("ShowNotificationsInAlwaysOn"), (__bridge CFPropertyListRef)(value), CFSTR("com.apple.BacklightServices"));
-    CFPreferencesAppSynchronize(CFSTR("com.apple.BacklightServices"));
-}
-
 %end
 
 %end // Group_Preferences
-
 //==============================================================
 // 6. CONSTRUCTOR: KHỞI TẠO ĐỒNG LOẠT VÀ NẠP NGAY LẬP TỨC
 //==============================================================
