@@ -93,7 +93,7 @@ static inline BOOL isNotificationsEnabled(void) {
 - (BOOL)isAlwaysOnEnabled;
 - (id)flipbookSpecification;
 - (id)sessionProvider;
-- (id)initWithBacklightEnvironmentSessionProvider:(id)arg1;
+- (id)initWithBacklightEnvironmentSessionProvider:(id)provider;
 - (BOOL)isShowingBlankingWindow;
 - (void)showBlankingWindow:(BOOL)show withFadeDuration:(double)duration;
 - (void)_setBlankingWindowVisible:(BOOL)visible fadeDuration:(double)duration;
@@ -153,6 +153,16 @@ static inline BOOL isNotificationsEnabled(void) {
 - (void)setBlankingRemovesPower:(BOOL)val;
 - (BOOL)disablesUpdates;
 - (void)setDisablesUpdates:(BOOL)val;
+- (BOOL)disabled;
+- (void)setDisabled:(BOOL)val;
+- (BOOL)isBlanked;
+- (void)setBlanked:(BOOL)val;
+- (BOOL)isFlipBookActive;
+- (BOOL)isFlipBookEnabled;
+- (void)setFlipBookEnabled:(BOOL)val;
+- (BOOL)isFlipBookSuppressed;
+- (void)setFlipBookSuppressed:(BOOL)val;
+- (void)powerStateDidChange:(id)arg1;
 @end
 
 @interface CSCoverSheetViewController : UIViewController
@@ -160,7 +170,16 @@ static inline BOOL isNotificationsEnabled(void) {
 - (BOOL)shouldDimForAlwaysOn;
 - (BOOL)coverSheetIsObscured;
 - (long long)backlightLuminance;
+- (void)setBacklightLevel:(float)level;
 - (NSArray *)sceneHostEnvironmentEntriesForBacklightSession;
+@end
+
+@interface SBLockScreenViewControllerBase : UIViewController
+- (void)setBacklightLevel:(float)level;
+@end
+
+@interface SBDashBoardLockScreenEnvironment : NSObject
+- (void)setBacklightLevel:(float)level;
 @end
 
 @interface CSBackgroundContentViewController : UIViewController
@@ -189,6 +208,8 @@ static inline BOOL isNotificationsEnabled(void) {
 
 @interface SBBacklightController : NSObject
 + (instancetype)sharedInstance;
+- (void)setBacklightState:(long long)state source:(long long)source;
+- (void)setBacklightState:(long long)state source:(long long)source animated:(BOOL)animated completion:(id)completion;
 - (void)animateBacklightToFactor:(float)factor duration:(double)duration source:(long long)source completion:(id)completion;
 - (float)backlightFactor;
 - (float)_factorToPublishForBacklightState:(long long)state;
@@ -252,14 +273,62 @@ static inline BOOL isNotificationsEnabled(void) {
 + (BOOL)isAlwaysOnDisplaySupported;
 @end
 
+@interface CBController : NSObject
+- (void)setPowerState:(BOOL)state completion:(id)completion;
+@end
+
 //==============================================================
 // 2. TẦNG BACKBOARDD & DRIVER HIỂN THỊ CỐT LÕI
 //==============================================================
 
 %group Group_Backboardd
 
-// Giữ nguồn nuôi panel màn hình khi dập blank
+%hook CBController
+- (void)setPowerState:(BOOL)state completion:(id)completion {
+    if (isAODMasterEnabled() && !state && gCurrentState != AODStateProximityOff) {
+        %orig(YES, completion);
+        return;
+    }
+    %orig(state, completion);
+}
+%end
+
 %hook CAWindowServerDisplay
+
+- (BOOL)disabled {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        return NO;
+    }
+    return %orig;
+}
+
+- (void)setDisabled:(BOOL)val {
+    if (isAODMasterEnabled() && val) {
+        if (gCurrentState != AODStateProximityOff) {
+            %orig(NO);
+            return;
+        }
+    }
+    %orig(val);
+}
+
+- (BOOL)isBlanked {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        return NO;
+    }
+    return %orig;
+}
+
+- (void)setBlanked:(BOOL)blanked {
+    if (isAODMasterEnabled() && blanked) {
+        if (gCurrentState != AODStateProximityOff) {
+            %orig(NO);
+            return;
+        }
+    }
+    %orig(blanked);
+}
+
 - (BOOL)blankingRemovesPower {
     if (isAODMasterEnabled() && gCurrentState != AODStateProximityOff) {
         return NO;
@@ -289,6 +358,51 @@ static inline BOOL isNotificationsEnabled(void) {
     }
     %orig(val);
 }
+
+- (BOOL)isFlipBookActive {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        return YES;
+    }
+    return %orig;
+}
+
+- (BOOL)isFlipBookEnabled {
+    if (isAODMasterEnabled()) {
+        return YES;
+    }
+    return %orig;
+}
+
+- (void)setFlipBookEnabled:(BOOL)val {
+    if (isAODMasterEnabled()) {
+        %orig(YES);
+        return;
+    }
+    %orig(val);
+}
+
+- (BOOL)isFlipBookSuppressed {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        return NO;
+    }
+    return %orig;
+}
+
+- (void)setFlipBookSuppressed:(BOOL)suppressed {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive && suppressed) {
+        %orig(NO);
+        return;
+    }
+    %orig(suppressed);
+}
+
+- (void)powerStateDidChange:(id)arg1 {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        return;
+    }
+    %orig(arg1);
+}
+
 %end
 
 %hook BKDisplayRenderOverlay
@@ -397,12 +511,135 @@ static inline BOOL isNotificationsEnabled(void) {
 %end // Group_Backboardd
 
 //==============================================================
-// 3. TẦNG SPRINGBOARD: KHOÁ FACTOR SÁNG VÀ SCENE ENTRIES
+// 3. TẦNG SPRINGBOARD: KHOÁ ĐỘ SÁNG TẤT CẢ CONTROLLER
 //==============================================================
 
 %group Group_SpringBoard
 
 static id gCachedFlipbookSpec = nil;
+
+%hook CSCoverSheetViewController
+- (void)setBacklightLevel:(float)level {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        %orig(getCustomAODBrightnessFactor() * 100.0f);
+        return;
+    }
+    %orig(level);
+}
+
+- (BOOL)isAlwaysOnPresentation { 
+    return (isAODMasterEnabled() && gCurrentState == AODStateActive) ? YES : %orig; 
+}
+
+- (BOOL)shouldDimForAlwaysOn { 
+    return (isAODMasterEnabled() && gCurrentState == AODStateActive) ? YES : %orig; 
+}
+
+- (BOOL)coverSheetIsObscured {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) return NO;
+    return %orig;
+}
+
+- (long long)backlightLuminance {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        return 1;
+    }
+    return %orig;
+}
+
+- (NSArray *)sceneHostEnvironmentEntriesForBacklightSession {
+    NSArray *entries = %orig;
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        if (!entries || entries.count == 0) {
+            @try {
+                id sceneHost = [self valueForKey:@"_sceneHostEnvironment"];
+                if (sceneHost) return @[sceneHost];
+            } @catch (NSException *e) {}
+        }
+    }
+    return entries;
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    %orig;
+    if (gCurrentState == AODStateActive) gCurrentState = AODStateIdle;
+}
+%end
+
+%hook SBLockScreenViewControllerBase
+- (void)setBacklightLevel:(float)level {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        %orig(getCustomAODBrightnessFactor() * 100.0f);
+        return;
+    }
+    %orig(level);
+}
+%end
+
+%hook SBDashBoardLockScreenEnvironment
+- (void)setBacklightLevel:(float)level {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        %orig(getCustomAODBrightnessFactor() * 100.0f);
+        return;
+    }
+    %orig(level);
+}
+%end
+
+%hook UIApplication
+- (void)setBacklightLevel:(float)level {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        %orig(getCustomAODBrightnessFactor() * 100.0f);
+        return;
+    }
+    %orig(level);
+}
+%end
+
+%hook SBBacklightController
+
+- (void)setBacklightState:(long long)state source:(long long)source {
+    if (isAODMasterEnabled() && state == 0) {
+        if (gCurrentState != AODStateProximityOff) {
+            gCurrentState = AODStateActive;
+            state = 2;
+        }
+    }
+    %orig(state, source);
+}
+
+- (void)setBacklightState:(long long)state source:(long long)source animated:(BOOL)animated completion:(id)completion {
+    if (isAODMasterEnabled() && state == 0) {
+        if (gCurrentState != AODStateProximityOff) {
+            gCurrentState = AODStateActive;
+            state = 2;
+        }
+    }
+    %orig(state, source, animated, completion);
+}
+
+- (float)_factorToPublishForBacklightState:(long long)state {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        return getCustomAODBrightnessFactor();
+    }
+    return %orig(state);
+}
+
+- (void)animateBacklightToFactor:(float)factor duration:(double)duration source:(long long)source completion:(id)completion {
+    if (isAODMasterEnabled()) {
+        if (gCurrentState == AODStateActive) {
+            if (factor <= 0.05f) {
+                factor = getCustomAODBrightnessFactor();
+            }
+        }
+        if (factor > 0.1f) {
+            gCurrentState = AODStateIdle;
+        }
+    }
+    %orig(factor, duration, source, completion);
+}
+
+%end
 
 %hook BLSBacklightFBSSceneEnvironment
 - (BOOL)supportsAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
@@ -429,7 +666,6 @@ static id gCachedFlipbookSpec = nil;
 - (BOOL)deviceSupportsAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
 - (BOOL)isAlwaysOnEnabled { return isAODMasterEnabled() ? YES : %orig; }
 
-// Cấp phát Specification an toàn tuyệt đối với fallback @try/@catch
 - (id)flipbookSpecification {
     id orig = %orig;
     if (orig) return orig;
@@ -465,7 +701,6 @@ static id gCachedFlipbookSpec = nil;
                         [inv invoke];
                         [inv getReturnValue:&gCachedFlipbookSpec];
                     } else {
-                        // Fallback khởi tạo mặc định nếu selector dài không khớp
                         gCachedFlipbookSpec = [[specClass alloc] init];
                     }
                 } @catch (NSException *e) {
@@ -544,46 +779,6 @@ static id gCachedFlipbookSpec = nil;
 - (BOOL)isAlwaysOnPolicyActive { return NO; }
 %end
 
-%hook CSCoverSheetViewController
-- (BOOL)isAlwaysOnPresentation { 
-    return (isAODMasterEnabled() && gCurrentState == AODStateActive) ? YES : %orig; 
-}
-
-- (BOOL)shouldDimForAlwaysOn { 
-    return (isAODMasterEnabled() && gCurrentState == AODStateActive) ? YES : %orig; 
-}
-
-- (BOOL)coverSheetIsObscured {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) return NO;
-    return %orig;
-}
-
-- (long long)backlightLuminance {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        return 1;
-    }
-    return %orig;
-}
-
-- (NSArray *)sceneHostEnvironmentEntriesForBacklightSession {
-    NSArray *entries = %orig;
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        if (!entries || entries.count == 0) {
-            @try {
-                id sceneHost = [self valueForKey:@"_sceneHostEnvironment"];
-                if (sceneHost) return @[sceneHost];
-            } @catch (NSException *e) {}
-        }
-    }
-    return entries;
-}
-
-- (void)viewWillDisappear:(BOOL)animated {
-    %orig;
-    if (gCurrentState == AODStateActive) gCurrentState = AODStateIdle;
-}
-%end
-
 %hook CSBackgroundContentViewController
 - (NSArray *)sceneHostEnvironmentEntriesForBacklightSession {
     if (isAODMasterEnabled() && !isWallpaperEnabled()) return @[];
@@ -652,30 +847,6 @@ static id gCachedFlipbookSpec = nil;
     } else {
         self.view.transform = CGAffineTransformIdentity;
     }
-}
-%end
-
-// Khóa factor sáng: Không cho sập về 0.0 khi vào state ngủ
-%hook SBBacklightController
-- (float)_factorToPublishForBacklightState:(long long)state {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        return getCustomAODBrightnessFactor();
-    }
-    return %orig(state);
-}
-
-- (void)animateBacklightToFactor:(float)factor duration:(double)duration source:(long long)source completion:(id)completion {
-    if (isAODMasterEnabled()) {
-        if (gCurrentState == AODStateActive) {
-            if (factor <= 0.05f) {
-                factor = getCustomAODBrightnessFactor();
-            }
-        }
-        if (factor > 0.1f) {
-            gCurrentState = AODStateIdle;
-        }
-    }
-    %orig(factor, duration, source, completion);
 }
 %end
 
