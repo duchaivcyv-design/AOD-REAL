@@ -17,6 +17,7 @@ typedef NS_ENUM(NSInteger, AODState) {
 static AODState gCurrentState = AODStateIdle;
 static BOOL gHasActiveNotification = NO;
 static NSInteger gBurnInShiftStep = 0;
+static id gInjectedSessionProvider = nil;
 
 static inline BOOL isAODMasterEnabled(void) {
     Boolean valid = false;
@@ -62,7 +63,7 @@ static inline BOOL isNotificationsEnabled(void) {
 }
 
 //==============================================================
-// 1. KHAI BÁO ĐẦY ĐỦ CÁC LỚP HỆ THỐNG (THEOS BUILD HOÀN CHỈNH)
+// 1. KHAI BÁO CÁC LỚP HỆ THỐNG
 //==============================================================
 
 @interface PSSpecifier : NSObject
@@ -94,6 +95,7 @@ static inline BOOL isNotificationsEnabled(void) {
 - (BOOL)isAlwaysOnEnabled;
 - (id)flipbookSpecification;
 - (id)sessionProvider;
+- (id)initWithBacklightEnvironmentSessionProvider:(id)arg1;
 - (BOOL)isShowingBlankingWindow;
 - (void)showBlankingWindow:(BOOL)show withFadeDuration:(double)duration;
 - (void)_setBlankingWindowVisible:(BOOL)visible fadeDuration:(double)duration;
@@ -152,6 +154,7 @@ static inline BOOL isNotificationsEnabled(void) {
 - (BOOL)isAlwaysOnPresentation;
 - (BOOL)shouldDimForAlwaysOn;
 - (void)updateAlwaysOnPresentationAnimated:(BOOL)animated;
+- (BOOL)coverSheetIsObscured;
 @end
 
 @interface SBLockScreenManager : NSObject
@@ -160,6 +163,7 @@ static inline BOOL isNotificationsEnabled(void) {
 - (BOOL)shouldPreventBacklightBlankingForAlwaysOn;
 - (void)lockUIFromSource:(int)source withOptions:(id)options;
 - (void)unlockUIFromSource:(int)source withOptions:(id)options;
+- (CSCoverSheetViewController *)coverSheetViewController;
 @end
 
 @interface SBBacklightController : NSObject
@@ -235,7 +239,6 @@ static inline BOOL isNotificationsEnabled(void) {
 - (BOOL)disablesDisplayBlanking { return isAODMasterEnabled() ? YES : %orig; }
 %end
 
-// Chặn dập tắt tín hiệu màn hình khi khóa máy
 %hook BKDisplayManager
 - (void)setBlanked:(BOOL)blanked withReason:(id)reason {
     if (isAODMasterEnabled() && blanked) {
@@ -305,7 +308,6 @@ static inline BOOL isNotificationsEnabled(void) {
 }
 %end
 
-// Ép Presentation Engine tự động tạo và duy trì Flipbook
 %hook BLSHAlwaysOnPresentationEngine
 - (BOOL)isSuppressed {
     if (isAODMasterEnabled()) return (gCurrentState == AODStateProximityOff) ? YES : %orig;
@@ -345,7 +347,7 @@ static inline BOOL isNotificationsEnabled(void) {
 %end // Group_Backboardd
 
 //==============================================================
-// 3. TẦNG SPRINGBOARD: KÍCH HOẠT SỚM VÀ CẤP PHÁT FLIPBOOK SPEC
+// 3. TẦNG SPRINGBOARD: INJECT SESSION PROVIDER & GIỮ KHUNG HÌNH
 //==============================================================
 
 %group Group_SpringBoard
@@ -353,10 +355,18 @@ static inline BOOL isNotificationsEnabled(void) {
 static BLSHFlipbookSpecification *gCachedFlipbookSpec = nil;
 
 %hook SBBacklightPlatformProvider
+
+// Bắt giữ session provider ngay từ constructor
+- (id)initWithBacklightEnvironmentSessionProvider:(id)provider {
+    if (provider) {
+        gInjectedSessionProvider = provider;
+    }
+    return %orig(provider);
+}
+
 - (BOOL)deviceSupportsAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
 - (BOOL)isAlwaysOnEnabled { return isAODMasterEnabled() ? YES : %orig; }
 
-// Cung cấp Specification chuẩn cho thiết bị không có AOD gốc
 - (id)flipbookSpecification {
     id orig = %orig;
     if (orig) return orig;
@@ -377,6 +387,20 @@ static BLSHFlipbookSpecification *gCachedFlipbookSpec = nil;
         return gCachedFlipbookSpec;
     }
     return nil;
+}
+
+// Cung cấp Session Provider thực sự cho Presentation Engine
+- (id)sessionProvider {
+    id orig = %orig;
+    if (orig) return orig;
+    if (isAODMasterEnabled()) {
+        if (gInjectedSessionProvider) return gInjectedSessionProvider;
+        Class providerClass = NSClassFromString(@"SBBacklightEnvironmentSessionProvider");
+        if (providerClass && [providerClass respondsToSelector:@selector(sharedInstance)]) {
+            return [providerClass performSelector:@selector(sharedInstance)];
+        }
+    }
+    return orig;
 }
 
 - (BOOL)isShowingBlankingWindow {
@@ -432,12 +456,17 @@ static BLSHFlipbookSpecification *gCachedFlipbookSpec = nil;
 - (BOOL)isAlwaysOnPolicyActive { return NO; }
 %end
 
+// Ép CoverSheet duy trì trạng thái hiển thị AOD, không bị dập đen
 %hook CSCoverSheetViewController
 - (BOOL)isAlwaysOnPresentation { 
     return (isAODMasterEnabled() && gCurrentState == AODStateActive) ? YES : %orig; 
 }
 - (BOOL)shouldDimForAlwaysOn { 
     return (isAODMasterEnabled() && gCurrentState == AODStateActive) ? YES : %orig; 
+}
+- (BOOL)coverSheetIsObscured {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) return NO;
+    return %orig;
 }
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
@@ -450,7 +479,6 @@ static BLSHFlipbookSpecification *gCachedFlipbookSpec = nil;
     return (isAODMasterEnabled() && gCurrentState != AODStateProximityOff) ? YES : %orig; 
 }
 
-// Bắt sự kiện bấm nút nguồn để bật cờ Active tức thời
 - (void)lockUIFromSource:(int)source withOptions:(id)options {
     if (isAODMasterEnabled()) {
         gCurrentState = AODStateActive;
