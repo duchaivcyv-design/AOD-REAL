@@ -1,5 +1,5 @@
 Package: com.jb.aodreal
-Name: AOD REAL
+Name: AODREAL
 Version: 0.0.1
 Architecture: iphoneos-arm64
 Description: Unlock native AOD engine (iOS 16-18.0 only for 8/XSM)
