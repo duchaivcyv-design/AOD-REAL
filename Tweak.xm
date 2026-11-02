@@ -1672,19 +1672,9 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 // 6. KHỞI TẠO TIẾN TRÌNH & ĐỒNG BỘ CẤU HÌNH REALTIME
 //==============================================================
 
-static BOOL gPreferencesInitialized = NO;
-
 // Callback đồng bộ cấu hình tức thì từ Darwin Notification
 static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     loadAODPreferences();
-}
-
-// Bắt sự kiện load bundle trễ của ứng dụng Cài đặt
-static void AODBundleDidLoadCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    if (!gPreferencesInitialized && NSClassFromString(@"DBSAlwaysOnViewController") != nil) {
-        %init(Group_Preferences);
-        gPreferencesInitialized = YES;
-    }
 }
 
 %ctor {
@@ -1705,7 +1695,7 @@ static void AODBundleDidLoadCallback(CFNotificationCenterRef center, void *obser
             CFNotificationSuspensionBehaviorDeliverImmediately
         );
 
-        // 3. Phân luồng nạp Hook chính xác theo từng daemon hệ thống
+        // 3. Phân luồng nạp Hook - Mỗi %init chỉ xuất hiện duy nhất 1 lần trong toàn bộ mã nguồn
         if ([bundleID isEqualToString:@"com.apple.springboard"] || [processName isEqualToString:@"SpringBoard"]) {
             %init(Group_SpringBoard);
         } else if ([bundleID isEqualToString:@"com.apple.PosterBoard"] || 
@@ -1716,26 +1706,7 @@ static void AODBundleDidLoadCallback(CFNotificationCenterRef center, void *obser
         } else if ([bundleID isEqualToString:@"com.apple.Preferences"] || 
                    [processName.lowercaseString containsString:@"preferences"] || 
                    [bundleID.lowercaseString containsString:@"preferences"]) {
-            
-            // Nếu mở thẳng vào Display & Brightness hoặc lớp đã có sẵn
-            if (NSClassFromString(@"DBSAlwaysOnViewController") != nil) {
-                %init(Group_Preferences);
-                gPreferencesInitialized = YES;
-            } else {
-                // Khởi tạo các hook cơ bản của Preferences (PSListController)
-                %init(Group_Preferences);
-                gPreferencesInitialized = YES;
-
-                // Đồng thời lắng nghe nạp động DisplayAndBrightnessSettings bundle
-                [[NSNotificationCenter defaultCenter] addObserverForName:NSBundleDidLoadNotification
-                                                                  object:nil
-                                                                   queue:[NSOperationQueue mainQueue]
-                                                              usingBlock:^(NSNotification *note) {
-                    if (NSClassFromString(@"DBSAlwaysOnViewController") != nil) {
-                        // Đảm bảo các method của DBSAlwaysOnViewController được liên kết
-                    }
-                }];
-            }
+            %init(Group_Preferences);
         }
     }
 }
