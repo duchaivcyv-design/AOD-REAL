@@ -90,27 +90,6 @@ static inline float getCustomAODRefreshRate(void) { return gCachedCustomHz; }
 static inline float getAODPanelBrightnessFactor(void) { return gCachedBrightnessFactor; }
 static inline float getCustomAODBrightnessFactor(void) { return gCachedBrightnessFactor; }
 
-// CHÍNH SÁCH NGẮT AOD TỰ ĐỘNG CHUẨN GỐC APPLE (CHỐNG DEADLOCK CRASH TRÊN MỌI TIẾN TRÌNH)
-static inline BOOL shouldSuppressAODBySystemPolicies(void) {
-    // 1. Kiểm tra mức pin <= 5% (chỉ khi không cắm sạc)
-    UIDevice *device = [UIDevice currentDevice];
-    [device setBatteryMonitoringEnabled:YES];
-    if (device.batteryState != UIDeviceBatteryStateCharging && 
-        device.batteryState != UIDeviceBatteryStateFull) {
-        if (device.batteryLevel > 0.0f && device.batteryLevel <= 0.05f) {
-            return YES;
-        }
-    }
-
-    // 2. Chế độ nguồn điện thấp (Tiết kiệm pin)
-    if ([[NSProcessInfo processInfo] isLowPowerModeEnabled]) {
-        return YES;
-    }
-
-    return NO;
-}
-
-
 //==============================================================
 // 1. KHAI BÁO CÁC LỚP VÀ GIAO DIỆN HỆ THỐNG
 //==============================================================
