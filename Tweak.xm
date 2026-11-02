@@ -56,6 +56,19 @@ static void AODLog(NSString *format, ...) {
 - (void)setAlwaysOnDisplayEnabled:(id)value specifier:(PSSpecifier *)specifier;
 @end
 
+@interface SBBacklightPlatformProvider : NSObject
+- (BOOL)deviceSupportsAlwaysOn;
+- (BOOL)isAlwaysOnEnabled;
+- (BOOL)isShowingBlankingWindow;
+- (void)showBlankingWindow:(BOOL)show withFadeDuration:(double)duration;
+- (void)_setBlankingWindowVisible:(BOOL)visible fadeDuration:(double)duration;
+@end
+
+@interface SBAlwaysOnPolicyCoordinator : NSObject
+- (NSSet *)activePolicies;
+- (void)_activatePolicy:(id)policy;
+@end
+
 @interface CAWindowServerDisplay : NSObject
 - (id)currentMode;
 - (BOOL)supportsVariableRefreshRate;
@@ -97,6 +110,15 @@ static void AODLog(NSString *format, ...) {
 - (BOOL)isAlwaysOnEnabled;
 - (BOOL)isAlwaysOnSuppressed;
 - (BOOL)isAlwaysOnDisabledByAssertion;
+@end
+
+@interface BLSHBacklightTransitionStateMachine : NSObject
+- (BOOL)isAlwaysOnEnabled;
+- (BOOL)isAlwaysOnSuppressed;
+@end
+
+@interface BLSHXPCBacklightProxyHost : NSObject
+- (BOOL)isAlwaysOnEnabled;
 @end
 
 @interface BLSHAlwaysOnPresentationEngine : NSObject
@@ -192,7 +214,7 @@ static void TriggerNotificationBoost(void) {
 }
 
 //==============================================================
-// 2. TẦNG 1 & 2: BACKBOARDD, IOKIT VÀ FLIPBOOK SUBSYSTEM
+// 2. TẦNG 1 & 2: BACKBOARDD, IOKIT VÀ CÁC STATE MACHINE GỐC
 //==============================================================
 
 %group Group_Backboardd
@@ -283,7 +305,6 @@ static void TriggerNotificationBoost(void) {
 - (BOOL)disablesDisplayBlanking { return isAODMasterEnabled() ? YES : %orig; }
 %end
 
-// Chặn ngắt nguồn màn hình trừ khi bị che cảm biến hoặc úp máy
 %hook BKDisplayManager
 - (void)setBlanked:(BOOL)blanked withReason:(id)reason {
     if (isAODMasterEnabled() && gIsAODActive && blanked) {
@@ -297,21 +318,17 @@ static void TriggerNotificationBoost(void) {
 %end
 
 %hook BLSHBacklightStateMachine
-
 - (BOOL)isAlwaysOnEnabled {
     return isAODMasterEnabled() ? YES : %orig;
 }
 
 - (BOOL)isAlwaysOnSuppressed {
     if (isAODMasterEnabled()) {
-        // SỬA Ở ĐÂY: Phải trả về NO cứng để ép hệ thống KHÔNG được đè nén AOD.
-        // Chỉ trả về YES khi điện thoại bị che cảm biến / đút túi.
         return gIsProximityBlocked ? YES : NO;
     }
     return %orig;
 }
 
-// Trả về %orig để hệ thống tắt AOD khi có cuộc gọi, camera, báo thức
 - (BOOL)isAlwaysOnDisabledByAssertion {
     return %orig;
 }
@@ -321,7 +338,7 @@ static void TriggerNotificationBoost(void) {
     if (isAODMasterEnabled() && state == 0) {
         if (!gIsProximityBlocked) {
             gIsAODActive = YES;
-            return 2; // Ép sang State 2 (Trạng thái AOD)
+            return 2;
         }
     }
     if (state != 2 && state != 0) {
@@ -329,6 +346,24 @@ static void TriggerNotificationBoost(void) {
         gHasActiveNotification = NO;
     }
     return state;
+}
+%end
+
+%hook BLSHBacklightTransitionStateMachine
+- (BOOL)isAlwaysOnEnabled {
+    return isAODMasterEnabled() ? YES : %orig;
+}
+- (BOOL)isAlwaysOnSuppressed {
+    if (isAODMasterEnabled()) {
+        return gIsProximityBlocked ? YES : NO;
+    }
+    return %orig;
+}
+%end
+
+%hook BLSHXPCBacklightProxyHost
+- (BOOL)isAlwaysOnEnabled {
+    return isAODMasterEnabled() ? YES : %orig;
 }
 %end
 
@@ -355,8 +390,6 @@ static void TriggerNotificationBoost(void) {
 - (BOOL)alwaysFillFlipbook {
     return isAODMasterEnabled() ? YES : %orig;
 }
-
-// FIX 2: Loại bỏ hook purgeFlipbook thủ công, để hệ thống tự quản lý chu kỳ dọn frame
 %end
 
 %hook BLSHBacklightSceneHostEnvironment
@@ -373,10 +406,94 @@ static void TriggerNotificationBoost(void) {
 %end // Group_Backboardd
 
 //==============================================================
-// 3. TẦNG 3: SPRINGBOARD, CẢM BIẾN TIỆM CẬN & CHỐNG ÁM MÀN
+// 3. TẦNG 3: SPRINGBOARD, PLATFORM PROVIDER & VÔ HIỆU HÓA POLICY
 //==============================================================
 
 %group Group_SpringBoard
+
+%hook SBBacklightPlatformProvider
+
+- (BOOL)deviceSupportsAlwaysOn {
+    return isAODMasterEnabled() ? YES : %orig;
+}
+
+- (BOOL)isAlwaysOnEnabled {
+    return isAODMasterEnabled() ? YES : %orig;
+}
+
+- (BOOL)isShowingBlankingWindow {
+    if (isAODMasterEnabled() && gIsAODActive && !gIsProximityBlocked) {
+        return NO;
+    }
+    return %orig;
+}
+
+- (void)showBlankingWindow:(BOOL)show withFadeDuration:(double)duration {
+    if (isAODMasterEnabled() && gIsAODActive && show) {
+        if (!gIsProximityBlocked) {
+            return;
+        }
+    }
+    %orig(show, duration);
+}
+
+- (void)_setBlankingWindowVisible:(BOOL)visible fadeDuration:(double)duration {
+    if (isAODMasterEnabled() && gIsAODActive && visible) {
+        if (!gIsProximityBlocked) {
+            return;
+        }
+    }
+    %orig(visible, duration);
+}
+
+- (BOOL)isUsingAlwaysOnBrightnessCurve {
+    if (isAODMasterEnabled() && gIsAODActive && !gIsProximityBlocked) {
+        return YES;
+    }
+    return %orig;
+}
+
+%end
+
+// 3.1 VÔ HIỆU HÓA COORDINATOR
+%hook SBAlwaysOnPolicyCoordinator
+
+- (NSSet *)activePolicies {
+    if (isAODMasterEnabled()) {
+        return [NSSet set];
+    }
+    return %orig;
+}
+
+- (void)_activatePolicy:(id)policy {
+    if (isAODMasterEnabled()) {
+        return;
+    }
+    %orig(policy);
+}
+
+%end
+
+// 3.2 VÔ HIỆU HÓA TẤT CẢ CÁC POLICY CON ĐÃ QUÉT ĐƯỢC
+%hook SBFocusModeAlwaysOnPolicy
+- (BOOL)isAlwaysOnPolicyActive { return NO; }
+%end
+
+%hook SBLowPowerModeAlwaysOnPolicy
+- (BOOL)isAlwaysOnPolicyActive { return NO; }
+%end
+
+%hook SBSetupAlwaysOnPolicy
+- (BOOL)isAlwaysOnPolicyActive { return NO; }
+%end
+
+%hook SBThermalAlwaysOnPolicy
+- (BOOL)isAlwaysOnPolicyActive { return NO; }
+%end
+
+%hook SBLockScreenService
+- (BOOL)isAlwaysOnPolicyActive { return NO; }
+%end
 
 %hook CSCoverSheetViewController
 - (BOOL)isAlwaysOnPresentation { 
@@ -395,6 +512,7 @@ static void TriggerNotificationBoost(void) {
 - (BOOL)shouldPreventBacklightBlankingForAlwaysOn { 
     return (isAODMasterEnabled() && !gIsProximityBlocked) ? YES : %orig; 
 }
+
 - (void)lockUIFromSource:(int)source withOptions:(id)options {
     %orig;
     if (isAODMasterEnabled()) {
@@ -402,23 +520,28 @@ static void TriggerNotificationBoost(void) {
         [UIDevice currentDevice].proximityMonitoringEnabled = YES;
     }
 }
+
 - (void)unlockUIFromSource:(int)source withOptions:(id)options {
     %orig;
     gIsAODActive = NO;
     gHasActiveNotification = NO;
     gIsProximityBlocked = NO;
     [UIDevice currentDevice].proximityMonitoringEnabled = NO;
+    
+    SBBacklightController *blCtrl = [%c(SBBacklightController) sharedInstance];
+    if (blCtrl && [blCtrl backlightFactor] < 0.1f) {
+        [blCtrl animateBacklightToFactor:1.0f duration:0.2f source:1 completion:nil];
+    }
 }
 %end
 
-// Chống ám màn hình: Tịnh tiến tọa độ vi mô cụm đồng hồ
 %hook SBFLockScreenDateViewController
 - (void)updateTimeNow {
     %orig;
     if (isAODMasterEnabled() && gIsAODActive) {
         gBurnInShiftCounter++;
-        CGFloat dx = (CGFloat)((gBurnInShiftCounter % 3) - 1) * 1.5f;
-        CGFloat dy = (CGFloat)(((gBurnInShiftCounter / 3) % 3) - 1) * 1.5f;
+        CGFloat dx = (CGFloat)((gBurnInShiftCounter % 3) - 1) * 0.5f;
+        CGFloat dy = (CGFloat)(((gBurnInShiftCounter / 3) % 3) - 1) * 0.5f;
         
         [UIView animateWithDuration:0.5f animations:^{
             self.view.transform = CGAffineTransformMakeTranslation(dx, dy);
@@ -443,16 +566,13 @@ static void TriggerNotificationBoost(void) {
 }
 %end
 
-// FIX 3: Chỉ can thiệp mức sáng AOD bình thường, không tự ép factor 0.0f đè lên tiệm cận
 %hook SBBacklightController
 - (void)animateBacklightToFactor:(float)factor duration:(double)duration source:(long long)source completion:(id)completion {
-    if (isAODMasterEnabled() && !gIsProximityBlocked) {
-        if (factor <= 0.05f) {
-            gIsAODActive = YES;
-            factor = getCustomAODBrightnessFactor();
-        } else {
-            gIsAODActive = NO;
-            gHasActiveNotification = NO;
+    if (isAODMasterEnabled()) {
+        if (gIsAODActive && !gIsProximityBlocked) {
+            if (factor <= 0.05f) {
+                factor = getCustomAODBrightnessFactor();
+            }
         }
     }
     %orig(factor, duration, source, completion);
