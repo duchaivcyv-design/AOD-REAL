@@ -23,7 +23,7 @@
             <key>key</key>
             <string>enabled</string>
             <key>default</key>
-            <false/>
+            <true/>
             <key>PostNotification</key>
             <string>com.jb.aodreal/preferences.changed</string>
         </dict>
