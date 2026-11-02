@@ -621,30 +621,10 @@ static id gCachedFlipbookSpec = nil;
             if (effectView) {
                 effectView.hidden = NO;
                 if (isBlurWallpaperEnabled()) {
-                    // LÀM MỜ HÌNH NỀN GỐC (BLUR PHOTO)
-                    effectView.backgroundColor = [UIColor colorWithWhite:0.0f alpha:0.45f];
+                    // LÀM MỜ NHẸ NHÀNG KHÔNG DÙNG CAFILTER NẶNG NỀ (CHỐNG NÓNG MÁY & CHỐNG LAG)
+                    effectView.backgroundColor = [UIColor colorWithWhite:0.0f alpha:0.40f];
                     effectView.alpha = 1.0f;
-                    
-                    // Gắn filter làm mờ gaussian trực tiếp vào layer của effectView nếu chưa có
-                    CALayer *layer = effectView.layer;
-                    static NSString *const kAODBlurFilterName = @"aodGaussianFilter";
-                    BOOL hasBlur = NO;
-                    for (id filter in layer.filters) {
-                        if ([[filter valueForKey:@"name"] isEqualToString:kAODBlurFilterName]) {
-                            hasBlur = YES;
-                            break;
-                        }
-                    }
-                    if (!hasBlur) {
-                        @try {
-                            id blurFilter = [NSClassFromString(@"CAFilter") performSelector:@selector(filterWithType:) withObject:@"gaussianBlur"];
-                            [blurFilter setValue:@(20.0f) forKey:@"inputRadius"];
-                            [blurFilter setValue:kAODBlurFilterName forKey:@"name"];
-                            NSMutableArray *filters = [layer.filters mutableCopy] ?: [NSMutableArray array];
-                            [filters addObject:blurFilter];
-                            layer.filters = filters;
-                        } @catch (NSException *e) {}
-                    }
+                    effectView.layer.filters = nil;
                 } else {
                     // KHÔNG LÀM MỜ: TRẢ VỀ ĐỘ TRONG TỰ NHIÊN
                     effectView.backgroundColor = [UIColor clearColor];
@@ -688,13 +668,22 @@ static id gCachedFlipbookSpec = nil;
 }
 %end
 
-// CÔNG TẮC GỐC SHOW NOTIFICATIONS: Gạt tắt là ẨN SẠCH THÔNG BÁO
+// CÔNG TẮC GỐC SHOW NOTIFICATIONS: AN TOÀN TUYỆT ĐỐI, CHỐNG RESPRING
 %hook CSCombinedListViewController
+
 - (void)viewDidLoad {
     %orig;
     gCombinedListVC = self;
 }
 
+- (void)dealloc {
+    if (gCombinedListVC == self) {
+        gCombinedListVC = nil;
+    }
+    %orig;
+}
+
+// Bắt đúng 2 selector gốc quản lý hiển thị thông báo trong AOD của Apple
 - (BOOL)showNotificationsInAlwaysOn {
     if (isAODMasterEnabled()) {
         return isNotificationsEnabled();
@@ -709,24 +698,22 @@ static id gCachedFlipbookSpec = nil;
     %orig(show);
 }
 
+// Khi vào AOD và tắt thông báo, hệ thống tự ẩn theo cờ gốc mà không can thiệp alpha view thủ công
 - (void)_setNotificationListHidden:(BOOL)hidden forReason:(id)reason {
     if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
         if (!isNotificationsEnabled()) {
-            %orig(YES, @"AODPreferencesSuppression");
-            self.view.alpha = 0.0f;
+            %orig(YES, reason);
             return;
         }
     }
     %orig(hidden, reason);
-    if (isNotificationsEnabled()) {
-        self.view.alpha = 1.0f;
-    }
 }
 
+// BẮT BUỘC GIỮ %orig: Không được trả về @[] làm rách Backlight Session của Apple
 - (NSArray *)sceneHostEnvironmentEntriesForBacklightSession {
-    if (isAODMasterEnabled() && !isNotificationsEnabled()) return @[];
     return %orig;
 }
+
 %end
 
 %hook CSBackgroundContentViewController
@@ -1032,29 +1019,52 @@ static id gCachedFlipbookSpec = nil;
 }
 %end
 
-// CẢM ỨNG CHẠM ĐÁNH THỨC (Tap to Wake)
+//==============================================================
+// CẢM ỨNG CHẠM ĐÁNH THỨC (CHỐNG CHẠM NHẦM KHI TAY ƯỚT / NƯỚC MƯA)
+//==============================================================
+
 %hook SBTapToWakeController
 - (BOOL)isTapToWakeSupported { return isAODMasterEnabled() ? YES : %orig; }
 - (BOOL)shouldTapToWake { return isAODMasterEnabled() ? YES : %orig; }
 
 - (void)tapToWakeDidRecognize:(id)arg1 {
     if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+        
+        // LỌC CHẠM NƯỚC / TAY ƯỚT DỰA TRÊN DIỆN TÍCH TIẾP XÚC (MAJOR RADIUS)
+        @try {
+            if ([arg1 respondsToSelector:@selector(allTouches)]) {
+                NSSet *touches = [arg1 performSelector:@selector(allTouches)];
+                for (UITouch *touch in touches) {
+                    // Nếu diện tích chạm quá lớn (do nước mưa loang hoặc lòng bàn tay) -> Hủy lệnh đánh thức
+                    if (touch.majorRadius > 18.0f || touch.majorRadiusTolerance > 10.0f) {
+                        return;
+                    }
+                }
+            }
+        } @catch (NSException *e) {}
+
+        // Thỏa mãn chạm ngón tay chuẩn -> Đánh thức màn hình ngay lập tức
         [[%c(SBLockScreenManager) sharedInstance] _wakeScreenForTapToWake];
     }
     %orig(arg1);
 }
 %end
 
-// CẢM BIẾN TIỆM CẬN: Đút túi/úp mặt thì dập tắt hẳn (0.0), nhấc ra thì tự bật lại
+//==============================================================
+// CẢM BIẾN TIỆM CẬN (CHE TỐI / ĐÚT TÚI LÀ NGẮT HOÀN TOÀN AOD)
+//==============================================================
+
 %hook SBProximitySensorManager
 - (void)_setObjectInProximity:(BOOL)inProximity detectionMode:(int)mode {
     %orig(inProximity, mode);
     if (!isAODMasterEnabled() || gCurrentState == AODStateIdle) return;
     
     if (inProximity) {
+        // Che camera / Tối hoàn toàn / Đút túi -> Tắt đen đèn nền panel về 0 để tiết kiệm pin tối đa
         gCurrentState = AODStateProximityOff;
         [[%c(SBBacklightController) sharedInstance] setBacklightState:0 source:1 animated:NO completion:nil];
     } else {
+        // Nhấc ra khỏi chỗ tối / Hết che camera -> Tự động phục hồi trạng thái AOD mượt mà
         gCurrentState = AODStateActive;
         [[%c(SBBacklightController) sharedInstance] setBacklightState:2 source:1 animated:YES completion:nil];
     }
@@ -1253,7 +1263,6 @@ static id gCachedFlipbookSpec = nil;
 }
 
 - (NSMutableArray *)specifiers {
-    // 1. Lấy mảng specifiers gốc từ hệ thống (đã có sẵn đầy đủ các khối như ảnh 2)
     NSMutableArray *specs = %orig;
     if (!specs) specs = [NSMutableArray array];
 
@@ -1261,14 +1270,14 @@ static id gCachedFlipbookSpec = nil;
     static NSString *const kHzID = @"AOD_CUSTOM_HZ_KEY";
     static NSString *const kBrightID = @"AOD_CUSTOM_BRIGHTNESS_KEY";
 
-    // Kiểm tra chống lặp: nếu đã có thanh trượt tầng sâu rồi thì trả về ngay
+    // Chống lặp: Nếu đã chèn khối tinh chỉnh rồi thì trả về ngay
     for (PSSpecifier *s in specs) {
         if ([[s propertyForKey:@"id"] isEqualToString:kHzID]) {
             return specs;
         }
     }
 
-    // 2. CHÈN DUY NHẤT CÔNG TẮC "Blur Wallpaper Photo" NẰM GIỮA HÌNH NỀN VÀ THÔNG BÁO
+    // 1. CHÈN DUY NHẤT 1 CÔNG TẮC "Blur Wallpaper Photo" VÀO CHÍNH GIỮA HÌNH NỀN VÀ THÔNG BÁO
     BOOL hasBlur = NO;
     for (PSSpecifier *s in specs) {
         if ([[s propertyForKey:@"id"] isEqualToString:kBlurID]) {
@@ -1287,7 +1296,7 @@ static id gCachedFlipbookSpec = nil;
                                                                       edit:Nil];
         [blurSwitch setProperty:kBlurID forKey:@"id"];
 
-        // Tìm đúng vị trí của "Hiển thị hình nền" để chèn ngay sau nó
+        // Tìm vị trí của "Hiển thị hình nền" để chèn ngay sau nó
         NSInteger wpIndex = -1;
         for (NSInteger i = 0; i < (NSInteger)specs.count; i++) {
             PSSpecifier *s = [specs objectAtIndex:i];
@@ -1306,18 +1315,18 @@ static id gCachedFlipbookSpec = nil;
         }
     }
 
-    // 3. KHỐI CẤU HÌNH PHẦN CỨNG TẦNG SÂU (GIỮ NGUYÊN DƯỚI CÙNG NHƯ ẢNH 2)
-    PSSpecifier *group = [%c(PSSpecifier) preferenceSpecifierNamed:@"TINH CHỈNH HZ FPS VÀ ĐỘ SÁNG (2-30)"
+    // 2. KHỐI CẤU HÌNH PHẦN CỨNG TẦNG SÂU (GIỮ NGUYÊN DƯỚI CÙNG NHƯ ẢNH 2)
+    PSSpecifier *group = [%c(PSSpecifier) preferenceSpecifierNamed:@"CẤU HÌNH PHẦN CỨNG TẦNG SÂU (2-20)"
                                                            target:self 
                                                               set:NULL 
                                                               get:NULL 
                                                            detail:Nil 
                                                              cell:0 
                                                              edit:Nil];
-    [group setProperty:@"1.Giảm tần số từ 2-30hz fps| 2. Giảm độ sáng cho AOD 1-30." forKey:@"footerText"];
+    [group setProperty:@"Ép phần cứng hạ xung và độ sáng xuống mức tối thiểu khi khóa màn hình." forKey:@"footerText"];
     [specs addObject:group];
 
-    PSSpecifier *hzSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Tần số quét tĩnh (2-30 Hz)"
+    PSSpecifier *hzSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Tần số quét tĩnh (2-20 Hz)"
                                                                target:self 
                                                                   set:@selector(setCustomHz:spec:) 
                                                                   get:@selector(getCustomHz:) 
@@ -1326,11 +1335,11 @@ static id gCachedFlipbookSpec = nil;
                                                                  edit:Nil];
     [hzSlider setProperty:kHzID forKey:@"id"];
     [hzSlider setProperty:@(2.0f) forKey:@"min"];
-    [hzSlider setProperty:@(30.0f) forKey:@"max"];
+    [hzSlider setProperty:@(20.0f) forKey:@"max"];
     [hzSlider setProperty:@YES forKey:@"showValue"];
     [specs addObject:hzSlider];
 
-    PSSpecifier *brightSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Độ sáng AOD (Mức 1-30)"
+    PSSpecifier *brightSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Độ sáng AOD (Mức 2-20)"
                                                                    target:self 
                                                                       set:@selector(setCustomBrightness:spec:) 
                                                                       get:@selector(getCustomBrightness:) 
@@ -1338,8 +1347,8 @@ static id gCachedFlipbookSpec = nil;
                                                                      cell:5 
                                                                      edit:Nil];
     [brightSlider setProperty:kBrightID forKey:@"id"];
-    [brightSlider setProperty:@(1.0f) forKey:@"min"];
-    [brightSlider setProperty:@(30.0f) forKey:@"max"];
+    [brightSlider setProperty:@(2.0f) forKey:@"min"];
+    [brightSlider setProperty:@(20.0f) forKey:@"max"];
     [brightSlider setProperty:@YES forKey:@"showValue"];
     [specs addObject:brightSlider];
 
