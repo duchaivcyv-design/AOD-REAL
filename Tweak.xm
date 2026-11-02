@@ -3,6 +3,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <QuartzCore/CAFrameRateRange.h>
 #import <IOKit/IOKitLib.h>
+#import <objc/runtime.h>
 
 //==============================================================
 // 0. BỘ ĐIỀU PHỐI TRẠNG THÁI TRUNG TÂM
@@ -76,7 +77,6 @@ static inline BOOL isNotificationsEnabled(void) {
 - (NSMutableArray *)specifiers;
 - (void)insertSpecifier:(PSSpecifier *)specifier atIndex:(NSInteger)index animated:(BOOL)animated;
 - (void)addSpecifier:(PSSpecifier *)specifier animated:(BOOL)animated;
-- (NSInteger)indexOfSpecifier:(PSSpecifier *)specifier;
 @end
 
 @interface DBSAlwaysOnViewController : PSListController
@@ -86,8 +86,6 @@ static inline BOOL isNotificationsEnabled(void) {
 
 @interface BLSHFlipbookSpecification : NSObject
 - (double)framesPerSecond;
-- (id)initWithSoftMemoryLimit:(unsigned long long)arg1 frameCapacity:(unsigned long long)arg2 framesPerSecond:(double)fps minimumGapDuration:(double)arg4 coaelscingEpsilon:(double)arg5 minimumPrepareInterval:(double)arg6 maximumRenderInterval:(double)arg7;
-- (id)initWithFrameCapacity:(unsigned long long)arg1 framesPerSecond:(double)fps minimumGapDuration:(double)arg3 coaelscingEpsilon:(double)arg4 minimumPrepareInterval:(double)arg5 maximumRenderInterval:(double)arg6;
 @end
 
 @interface SBBacklightPlatformProvider : NSObject
@@ -100,6 +98,17 @@ static inline BOOL isNotificationsEnabled(void) {
 - (void)showBlankingWindow:(BOOL)show withFadeDuration:(double)duration;
 - (void)_setBlankingWindowVisible:(BOOL)visible fadeDuration:(double)duration;
 - (BOOL)isUsingAlwaysOnBrightnessCurve;
+@end
+
+@interface SBBacklightEnvironmentSessionProvider : NSObject
+- (id)createInactiveEnvironmentSession;
+- (id)_buildPresentation;
+@end
+
+@interface BLSBacklightFBSSceneEnvironment : NSObject
+- (BOOL)supportsAlwaysOn;
+- (BOOL)isDisplayBlanked;
+- (long long)visualState;
 @end
 
 @interface SBAlwaysOnPolicyCoordinator : NSObject
@@ -140,21 +149,34 @@ static inline BOOL isNotificationsEnabled(void) {
 - (id)currentMode;
 - (void)setRefreshRate:(float)rate;
 - (float)refreshRate;
-- (void)setLowPowerRefreshRate:(float)arg1;
-- (float)lowPowerRefreshRate;
-@end
-
-@interface CADisplay : NSObject
-- (CAFrameRateRange)preferredFrameRateRange;
-- (void)setPreferredFrameRateRange:(CAFrameRateRange)range;
-- (void)setFrameRateRange:(CAFrameRateRange)range;
+- (BOOL)blankingRemovesPower;
+- (void)setBlankingRemovesPower:(BOOL)val;
+- (BOOL)disablesUpdates;
+- (void)setDisablesUpdates:(BOOL)val;
 @end
 
 @interface CSCoverSheetViewController : UIViewController
 - (BOOL)isAlwaysOnPresentation;
 - (BOOL)shouldDimForAlwaysOn;
-- (void)updateAlwaysOnPresentationAnimated:(BOOL)animated;
 - (BOOL)coverSheetIsObscured;
+- (long long)backlightLuminance;
+- (NSArray *)sceneHostEnvironmentEntriesForBacklightSession;
+@end
+
+@interface CSBackgroundContentViewController : UIViewController
+- (NSArray *)sceneHostEnvironmentEntriesForBacklightSession;
+@end
+
+@interface CSComplicationContainerViewController : UIViewController
+- (NSArray *)sceneHostEnvironmentEntriesForBacklightSession;
+@end
+
+@interface CSCombinedListViewController : UIViewController
+- (NSArray *)sceneHostEnvironmentEntriesForBacklightSession;
+@end
+
+@interface CSActivityItemViewController : UIViewController
+- (NSArray *)sceneHostEnvironmentEntriesForBacklightSession;
 @end
 
 @interface SBLockScreenManager : NSObject
@@ -163,13 +185,13 @@ static inline BOOL isNotificationsEnabled(void) {
 - (BOOL)shouldPreventBacklightBlankingForAlwaysOn;
 - (void)lockUIFromSource:(int)source withOptions:(id)options;
 - (void)unlockUIFromSource:(int)source withOptions:(id)options;
-- (CSCoverSheetViewController *)coverSheetViewController;
 @end
 
 @interface SBBacklightController : NSObject
 + (instancetype)sharedInstance;
 - (void)animateBacklightToFactor:(float)factor duration:(double)duration source:(long long)source completion:(id)completion;
 - (float)backlightFactor;
+- (float)_factorToPublishForBacklightState:(long long)state;
 @end
 
 @interface BLSHBacklightStateMachine : NSObject
@@ -190,6 +212,11 @@ static inline BOOL isNotificationsEnabled(void) {
 - (void)startLiveUpdates;
 @end
 
+@interface BLSHPseudoFlipbook : NSObject
+- (id)init;
+- (id)frameOnGlass;
+@end
+
 @interface BLSHBacklightSceneHostEnvironment : NSObject
 - (BOOL)supportsAlwaysOn;
 - (BOOL)isAlwaysOnActive;
@@ -208,13 +235,9 @@ static inline BOOL isNotificationsEnabled(void) {
 - (void)setBlanked:(BOOL)blanked withReason:(id)reason;
 @end
 
-@interface PRRenderingBacklightEnvironment : NSObject
-- (BOOL)supportsAlwaysOn;
-- (BOOL)isAlwaysOnActive;
-@end
-
 @interface PRPosterEnvironmentImpl : NSObject
-- (long long)backlightLuminance;
+- (long long)luminance;
+- (BOOL)isLowLuminance;
 @end
 
 @interface BLSBacklight : NSObject
@@ -230,10 +253,43 @@ static inline BOOL isNotificationsEnabled(void) {
 @end
 
 //==============================================================
-// 2. TẦNG BACKBOARDD & DRIVER PHẦN CỨNG
+// 2. TẦNG BACKBOARDD & DRIVER HIỂN THỊ CỐT LÕI
 //==============================================================
 
 %group Group_Backboardd
+
+// Giữ nguồn nuôi panel màn hình khi dập blank
+%hook CAWindowServerDisplay
+- (BOOL)blankingRemovesPower {
+    if (isAODMasterEnabled() && gCurrentState != AODStateProximityOff) {
+        return NO;
+    }
+    return %orig;
+}
+
+- (void)setBlankingRemovesPower:(BOOL)val {
+    if (isAODMasterEnabled() && gCurrentState != AODStateProximityOff) {
+        %orig(NO);
+        return;
+    }
+    %orig(val);
+}
+
+- (BOOL)disablesUpdates {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        return NO;
+    }
+    return %orig;
+}
+
+- (void)setDisablesUpdates:(BOOL)val {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        %orig(NO);
+        return;
+    }
+    %orig(val);
+}
+%end
 
 %hook BKDisplayRenderOverlay
 - (BOOL)disablesDisplayBlanking { return isAODMasterEnabled() ? YES : %orig; }
@@ -298,14 +354,6 @@ static inline BOOL isNotificationsEnabled(void) {
     if (isAODMasterEnabled()) return (double)getCustomAODRefreshRate();
     return %orig;
 }
-- (id)initWithSoftMemoryLimit:(unsigned long long)arg1 frameCapacity:(unsigned long long)arg2 framesPerSecond:(double)fps minimumGapDuration:(double)arg4 coaelscingEpsilon:(double)arg5 minimumPrepareInterval:(double)arg6 maximumRenderInterval:(double)arg7 {
-    if (isAODMasterEnabled()) fps = (double)getCustomAODRefreshRate();
-    return %orig(arg1, arg2, fps, arg4, arg5, arg6, arg7);
-}
-- (id)initWithFrameCapacity:(unsigned long long)arg1 framesPerSecond:(double)fps minimumGapDuration:(double)arg3 coaelscingEpsilon:(double)arg4 minimumPrepareInterval:(double)arg5 maximumRenderInterval:(double)arg6 {
-    if (isAODMasterEnabled()) fps = (double)getCustomAODRefreshRate();
-    return %orig(arg1, fps, arg3, arg4, arg5, arg6);
-}
 %end
 
 %hook BLSHAlwaysOnPresentationEngine
@@ -328,7 +376,9 @@ static inline BOOL isNotificationsEnabled(void) {
 - (void)startLiveUpdates {
     %orig;
     if (isAODMasterEnabled()) {
-        [self startFlipbookAndEnsureCurrent];
+        @try {
+            [self startFlipbookAndEnsureCurrent];
+        } @catch (NSException *e) {}
     }
 }
 %end
@@ -347,16 +397,28 @@ static inline BOOL isNotificationsEnabled(void) {
 %end // Group_Backboardd
 
 //==============================================================
-// 3. TẦNG SPRINGBOARD: INJECT SESSION PROVIDER & GIỮ KHUNG HÌNH
+// 3. TẦNG SPRINGBOARD: KHOÁ FACTOR SÁNG VÀ SCENE ENTRIES
 //==============================================================
 
 %group Group_SpringBoard
 
-static BLSHFlipbookSpecification *gCachedFlipbookSpec = nil;
+static id gCachedFlipbookSpec = nil;
+
+%hook BLSBacklightFBSSceneEnvironment
+- (BOOL)supportsAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
+
+- (BOOL)isDisplayBlanked {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) return NO;
+    return %orig;
+}
+
+- (long long)visualState {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) return 2;
+    return %orig;
+}
+%end
 
 %hook SBBacklightPlatformProvider
-
-// Bắt giữ session provider ngay từ constructor
 - (id)initWithBacklightEnvironmentSessionProvider:(id)provider {
     if (provider) {
         gInjectedSessionProvider = provider;
@@ -367,6 +429,7 @@ static BLSHFlipbookSpecification *gCachedFlipbookSpec = nil;
 - (BOOL)deviceSupportsAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
 - (BOOL)isAlwaysOnEnabled { return isAODMasterEnabled() ? YES : %orig; }
 
+// Cấp phát Specification an toàn tuyệt đối với fallback @try/@catch
 - (id)flipbookSpecification {
     id orig = %orig;
     if (orig) return orig;
@@ -375,13 +438,39 @@ static BLSHFlipbookSpecification *gCachedFlipbookSpec = nil;
         if (!gCachedFlipbookSpec) {
             Class specClass = NSClassFromString(@"BLSHFlipbookSpecification");
             if (specClass) {
-                gCachedFlipbookSpec = [[specClass alloc] initWithSoftMemoryLimit:52428800
-                                                                   frameCapacity:120
-                                                                 framesPerSecond:(double)getCustomAODRefreshRate()
-                                                              minimumGapDuration:0.0
-                                                               coaelscingEpsilon:0.1
-                                                          minimumPrepareInterval:0.05
-                                                           maximumRenderInterval:0.25];
+                @try {
+                    SEL sel1 = @selector(initWithSoftMemoryLimit:frameCapacity:framesPerSecond:minimumGapDuration:coaelscingEpsilon:minimumPrepareInterval:maximumRenderInterval:);
+                    if ([specClass instancesRespondToSelector:sel1]) {
+                        NSMethodSignature *sig = [specClass instanceMethodSignatureForSelector:sel1];
+                        NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+                        id instance = [specClass alloc];
+                        [inv setTarget:instance];
+                        [inv setSelector:sel1];
+                        
+                        unsigned long long softLimit = 52428800;
+                        unsigned long long cap = 120;
+                        double fps = (double)getCustomAODRefreshRate();
+                        double minGap = 0.0;
+                        double coalescing = 0.1;
+                        double minPrep = 0.05;
+                        double maxRend = 0.25;
+                        
+                        [inv setArgument:&softLimit atIndex:2];
+                        [inv setArgument:&cap atIndex:3];
+                        [inv setArgument:&fps atIndex:4];
+                        [inv setArgument:&minGap atIndex:5];
+                        [inv setArgument:&coalescing atIndex:6];
+                        [inv setArgument:&minPrep atIndex:7];
+                        [inv setArgument:&maxRend atIndex:8];
+                        [inv invoke];
+                        [inv getReturnValue:&gCachedFlipbookSpec];
+                    } else {
+                        // Fallback khởi tạo mặc định nếu selector dài không khớp
+                        gCachedFlipbookSpec = [[specClass alloc] init];
+                    }
+                } @catch (NSException *e) {
+                    gCachedFlipbookSpec = [[specClass alloc] init];
+                }
             }
         }
         return gCachedFlipbookSpec;
@@ -389,7 +478,6 @@ static BLSHFlipbookSpecification *gCachedFlipbookSpec = nil;
     return nil;
 }
 
-// Cung cấp Session Provider thực sự cho Presentation Engine
 - (id)sessionProvider {
     id orig = %orig;
     if (orig) return orig;
@@ -456,21 +544,63 @@ static BLSHFlipbookSpecification *gCachedFlipbookSpec = nil;
 - (BOOL)isAlwaysOnPolicyActive { return NO; }
 %end
 
-// Ép CoverSheet duy trì trạng thái hiển thị AOD, không bị dập đen
 %hook CSCoverSheetViewController
 - (BOOL)isAlwaysOnPresentation { 
     return (isAODMasterEnabled() && gCurrentState == AODStateActive) ? YES : %orig; 
 }
+
 - (BOOL)shouldDimForAlwaysOn { 
     return (isAODMasterEnabled() && gCurrentState == AODStateActive) ? YES : %orig; 
 }
+
 - (BOOL)coverSheetIsObscured {
     if (isAODMasterEnabled() && gCurrentState == AODStateActive) return NO;
     return %orig;
 }
+
+- (long long)backlightLuminance {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        return 1;
+    }
+    return %orig;
+}
+
+- (NSArray *)sceneHostEnvironmentEntriesForBacklightSession {
+    NSArray *entries = %orig;
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        if (!entries || entries.count == 0) {
+            @try {
+                id sceneHost = [self valueForKey:@"_sceneHostEnvironment"];
+                if (sceneHost) return @[sceneHost];
+            } @catch (NSException *e) {}
+        }
+    }
+    return entries;
+}
+
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
     if (gCurrentState == AODStateActive) gCurrentState = AODStateIdle;
+}
+%end
+
+%hook CSBackgroundContentViewController
+- (NSArray *)sceneHostEnvironmentEntriesForBacklightSession {
+    if (isAODMasterEnabled() && !isWallpaperEnabled()) return @[];
+    return %orig;
+}
+%end
+
+%hook CSComplicationContainerViewController
+- (NSArray *)sceneHostEnvironmentEntriesForBacklightSession {
+    return %orig;
+}
+%end
+
+%hook CSCombinedListViewController
+- (NSArray *)sceneHostEnvironmentEntriesForBacklightSession {
+    if (isAODMasterEnabled() && !isNotificationsEnabled()) return @[];
+    return %orig;
 }
 %end
 
@@ -525,7 +655,15 @@ static BLSHFlipbookSpecification *gCachedFlipbookSpec = nil;
 }
 %end
 
+// Khóa factor sáng: Không cho sập về 0.0 khi vào state ngủ
 %hook SBBacklightController
+- (float)_factorToPublishForBacklightState:(long long)state {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        return getCustomAODBrightnessFactor();
+    }
+    return %orig(state);
+}
+
 - (void)animateBacklightToFactor:(float)factor duration:(double)duration source:(long long)source completion:(id)completion {
     if (isAODMasterEnabled()) {
         if (gCurrentState == AODStateActive) {
@@ -544,20 +682,22 @@ static BLSHFlipbookSpecification *gCachedFlipbookSpec = nil;
 %end // Group_SpringBoard
 
 //==============================================================
-// 4. TẦNG POSTERBOARD: TẮT NỀN ĐEN TUYỀN OLED
+// 4. TẦNG POSTERBOARD: DUY TRÌ LUMINANCE AOD
 //==============================================================
 
 %group Group_PosterBoard
 
-%hook PRRenderingBacklightEnvironment
-- (BOOL)supportsAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
-- (BOOL)isAlwaysOnActive { return (isAODMasterEnabled() && gCurrentState != AODStateProximityOff) ? YES : %orig; }
-%end
-
 %hook PRPosterEnvironmentImpl
-- (long long)backlightLuminance {
+- (long long)luminance {
     if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        return isWallpaperEnabled() ? 1 : 0;
+        return 1;
+    }
+    return %orig;
+}
+
+- (BOOL)isLowLuminance {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        return YES;
     }
     return %orig;
 }
