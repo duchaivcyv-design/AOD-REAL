@@ -1333,7 +1333,15 @@ static void AODInjectIntoList(PSListController *list) {
     }
 
     if (!hasHardwareGroup) {
-        PSSpecifier *group = [%c(PSSpecifier) groupSpecifierWithName:@"CẤU HÌNH PHẦN CỨNG TẦNG SÂU (2-30)"];
+        // SỬA LẠI CHUẨN PREFERENCES CELL 0:
+        PSSpecifier *group = [%c(PSSpecifier) preferenceSpecifierNamed:@"CẤU HÌNH PHẦN CỨNG TẦNG SÂU (2-30)"
+                                                       target:self 
+                                                          set:NULL 
+                                                          get:NULL 
+                                                       detail:Nil 
+                                                         cell:0 
+                                                         edit:Nil];
+
         [group setProperty:@"Ép phần cứng hạ xung nhịp và độ sáng xuống mức tối thiểu khi khóa màn hình." forKey:@"footerText"];
         [specs addObject:group];
 
