@@ -4,9 +4,7 @@
 #import <signal.h>
 #import <sys/wait.h>
 #import <unistd.h>
-
-// Khai báo hàm C API respring của FrontBoardServices (an toàn, chuẩn của Apple)
-extern void FBSSystemServiceRespring(void);
+#import <dlfcn.h>
 
 @implementation AODREALRootListController
 
@@ -60,17 +58,18 @@ extern void FBSSystemServiceRespring(void);
 }
 
 //==============================================================
-// XỬ LÝ RESPRING ĐA TẦNG AN TOÀN
+// XỬ LÝ RESPRING ĐA TẦNG AN TOÀN (DYNAMIC RUNTIME RESOLUTION)
 //==============================================================
 
 - (void)respring {
-    // Cách 1: Gọi trực tiếp API C FBSSystemServiceRespring nếu symbol tồn tại
-    if (&FBSSystemServiceRespring != NULL) {
-        FBSSystemServiceRespring();
+    // Cách 1: Nạp động hàm C FBSSystemServiceRespring qua dlsym (không gây lỗi linker)
+    void (*dynamicRespring)(void) = (void (*)(void))dlsym(RTLD_DEFAULT, "FBSSystemServiceRespring");
+    if (dynamicRespring) {
+        dynamicRespring();
         return;
     }
 
-    // Cách 2: Gọi FrontBoardServices ObjC runtime (Tránh bị sandbox chặn)
+    // Cách 2: Gọi FrontBoardServices qua Objective-C Runtime
     Class fbssClass = NSClassFromString(@"FBSSystemService");
     if (fbssClass && [fbssClass respondsToSelector:@selector(sharedService)]) {
         id service = [fbssClass performSelector:@selector(sharedService)];
@@ -78,19 +77,17 @@ extern void FBSSystemServiceRespring(void);
         if (service && [service respondsToSelector:respringSel]) {
             #pragma clang diagnostic push
             #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-            // YES = Relaunch SpringBoard ngay sau khi exit
             [service performSelector:respringSel withObject:@(YES)];
             #pragma clang diagnostic pop
             return;
         }
     }
 
-    // Cách 3: Thử dùng sbreload hoặc killall qua posix_spawn (Hỗ trợ rootless/rootful)
+    // Cách 3: Gọi sbreload hoặc killall qua posix_spawn
     pid_t pid;
     const char *argsReload[] = {"sbreload", NULL};
     const char *argsKill[] = {"killall", "-9", "SpringBoard", NULL};
     
-    // Thử chạy sbreload trước (mượt hơn killall, có sẵn trên Dopamine/Palera1n)
     const char *sbreloadPaths[] = {
         "/var/jb/usr/bin/sbreload",
         "/usr/bin/sbreload"
@@ -105,7 +102,6 @@ extern void FBSSystemServiceRespring(void);
         }
     }
 
-    // Fallback: killall -9 SpringBoard
     const char *killallPaths[] = {
         "/var/jb/usr/bin/killall",
         "/usr/bin/killall",
@@ -122,7 +118,7 @@ extern void FBSSystemServiceRespring(void);
         }
     }
 
-    // Cách 4: Fallback bằng Darwin Notification chuẩn iOS (không dùng hàm system() bị cấm)
+    // Cách 4: Fallback bằng thông báo Darwin relaunch SpringBoard
     CFNotificationCenterPostNotification(
         CFNotificationCenterGetDarwinNotifyCenter(),
         CFSTR("com.apple.springboard.relaunch"),
