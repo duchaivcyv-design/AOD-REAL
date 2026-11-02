@@ -106,7 +106,7 @@ static inline BOOL isAODMasterEnabled(void) {
         CFSTR("com.jb.aodreal"),
         &valid
     );
-    if (!valid) return NO;
+    if (!valid) return YES; // Mặc định mở cờ hiển thị cho menu
     return (BOOL)val;
 }
 
@@ -559,7 +559,7 @@ static void TriggerNotificationBoost(void) {
 %hook BLSBacklight
 
 + (BOOL)isAlwaysOnEnabledByHardware {
-    return isAODMasterEnabled() ? YES : %orig;
+    return YES;
 }
 
 %end
@@ -567,7 +567,7 @@ static void TriggerNotificationBoost(void) {
 %hook BLSAlwaysOnFrequencyConfiguration
 
 - (BOOL)isAlwaysOnEnabled {
-    return isAODMasterEnabled() ? YES : %orig;
+    return YES;
 }
 
 %end
@@ -575,28 +575,28 @@ static void TriggerNotificationBoost(void) {
 %hook CBDisplayModule
 
 - (BOOL)isAlwaysOnDisplaySupported {
-    return isAODMasterEnabled() ? YES : %orig;
+    return YES;
 }
 
 %end
 
+// Ép hiển thị mục AOD vĩnh viễn trong Cài đặt -> Màn hình & Độ sáng
 %hook DBRDisplayController
 
 - (BOOL)shouldShowAlwaysOnDisplay {
-    return isAODMasterEnabled() ? YES : %orig;
+    return YES;
 }
 
 - (BOOL)shouldShowAlwaysOnDisplaySpecifier {
-    return isAODMasterEnabled() ? YES : %orig;
+    return YES;
 }
 
 - (BOOL)isAlwaysOnDisplaySupported {
-    return isAODMasterEnabled() ? YES : %orig;
+    return YES;
 }
 
 - (id)specifiers {
     NSMutableArray *specs = %orig;
-    if (!isAODMasterEnabled()) return specs;
 
     static NSString *const kAODID = @"ALWAYS_ON_DISPLAY";
     BOOL exists = NO;
@@ -640,11 +640,11 @@ static void TriggerNotificationBoost(void) {
 %hook DBRAlwaysOnDisplayDetailController
 
 - (BOOL)shouldShowAlwaysOnDisplaySpecifiers {
-    return isAODMasterEnabled() ? YES : %orig;
+    return YES;
 }
 
 - (BOOL)isAlwaysOnDisplayEnabled {
-    return isAODMasterEnabled() ? YES : %orig;
+    return isAODMasterEnabled();
 }
 
 - (id)specifiers {
@@ -720,6 +720,9 @@ static void TriggerNotificationBoost(void) {
 }
 
 - (void)setAlwaysOnDisplayEnabled:(id)value specifier:(PSSpecifier *)specifier {
+    CFPreferencesSetAppValue(CFSTR("enabled"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
+    CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
+
     CFPreferencesSetAppValue(CFSTR("AlwaysOnDisplayEnabled"), (__bridge CFPropertyListRef)(value), CFSTR("com.apple.BacklightServices"));
     CFPreferencesAppSynchronize(CFSTR("com.apple.BacklightServices"));
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.apple.BacklightServices.AlwaysOnDisplayEnabled.changed"), NULL, NULL, YES);
@@ -756,7 +759,9 @@ static void TriggerNotificationBoost(void) {
         NSString *processName = [[NSProcessInfo processInfo] processName];
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
 
-        if ([bundleID isEqualToString:@"com.apple.Preferences"]) {
+        // Mở rộng bộ lọc nạp cho cả DisplayAndBrightnessSettings
+        if ([bundleID isEqualToString:@"com.apple.Preferences"] ||
+            [bundleID isEqualToString:@"com.apple.DisplayAndBrightnessSettings"]) {
             %init(Group_Preferences);
         } else if ([bundleID isEqualToString:@"com.apple.springboard"]) {
             %init(Group_SpringBoard);
