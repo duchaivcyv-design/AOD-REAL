@@ -53,7 +53,9 @@
             <key>showValue</key>
             <true/>
             <key>isSegmented</key>
-            <false/>
+            <true/>
+            <key>segmentCount</key>
+            <integer>18</integer>
             <key>PostNotification</key>
             <string>com.jb.aodreal/preferences.changed</string>
         </dict>
@@ -83,7 +85,9 @@
             <key>showValue</key>
             <true/>
             <key>isSegmented</key>
-            <false/>
+            <true/>
+            <key>segmentCount</key>
+            <integer>18</integer>
             <key>PostNotification</key>
             <string>com.jb.aodreal/preferences.changed</string>
         </dict>
