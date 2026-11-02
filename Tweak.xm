@@ -30,14 +30,14 @@ static void AODLog(NSString *format, ...) {
 //==============================================================
 
 typedef NS_ENUM(NSInteger, AODState) {
-    AODStateIdle = 0,       // Máy đang dùng / Mở khóa
+    AODStateIdle = 0,       // Máy đang dùng / Đã mở khóa
     AODStateActive,        // Đang hiển thị AOD tĩnh
     AODStateProximityOff   // Đang che cảm biến / Bỏ túi
 };
 
 static AODState gCurrentState = AODStateIdle;
 static BOOL gHasActiveNotification = NO;
-static NSInteger gBurnInShiftCounter = 0;
+static NSInteger gBurnInShiftStep = 0;
 
 static inline BOOL isAODMasterEnabled(void) {
     Boolean valid = false;
@@ -103,7 +103,7 @@ static void TriggerNotificationBoost(void) {
 }
 
 //==============================================================
-// 1. KHAI BÁO CÁC LỚP HỆ THỐNG
+// 1. KHAI BÁO TOÀN BỘ CÁC LỚP HỆ THỐNG ĐỂ BUILD THEOS KHÔNG LỖI
 //==============================================================
 
 @interface PSSpecifier : NSObject
@@ -129,11 +129,48 @@ static void TriggerNotificationBoost(void) {
 - (BOOL)isAlwaysOnEnabled;
 - (BOOL)isShowingBlankingWindow;
 - (void)showBlankingWindow:(BOOL)show withFadeDuration:(double)duration;
+- (void)_setBlankingWindowVisible:(BOOL)visible fadeDuration:(double)duration;
+- (BOOL)isUsingAlwaysOnBrightnessCurve;
 @end
 
 @interface SBAlwaysOnPolicyCoordinator : NSObject
 - (NSSet *)activePolicies;
 - (void)_activatePolicy:(id)policy;
+@end
+
+// Bổ sung đầy đủ các policy con nội bộ của SpringBoard
+@interface SBFocusModeAlwaysOnPolicy : NSObject
+- (BOOL)isAlwaysOnPolicyActive;
+@end
+
+@interface SBLowPowerModeAlwaysOnPolicy : NSObject
+- (BOOL)isAlwaysOnPolicyActive;
+@end
+
+@interface SBSetupAlwaysOnPolicy : NSObject
+- (BOOL)isAlwaysOnPolicyActive;
+@end
+
+@interface SBThermalAlwaysOnPolicy : NSObject
+- (BOOL)isAlwaysOnPolicyActive;
+@end
+
+@interface SBLockScreenService : NSObject
+- (BOOL)isAlwaysOnPolicyActive;
+@end
+
+// Khai báo các subsystem chuyển tiếp của backboardd
+@interface BLSHBacklightTransitionStateMachine : NSObject
+- (BOOL)isAlwaysOnEnabled;
+- (BOOL)isAlwaysOnSuppressed;
+@end
+
+@interface BLSHXPCBacklightProxyHost : NSObject
+- (BOOL)isAlwaysOnEnabled;
+@end
+
+@interface BLSHFlipbookSpecification : NSObject
+- (double)framesPerSecond;
 @end
 
 @interface CAWindowServerDisplay : NSObject
@@ -153,6 +190,39 @@ static void TriggerNotificationBoost(void) {
 @interface CSCoverSheetViewController : UIViewController
 - (BOOL)isAlwaysOnPresentation;
 - (BOOL)shouldDimForAlwaysOn;
+@end
+
+@interface SBLockScreenManager : NSObject
++ (instancetype)sharedInstance;
+- (BOOL)isLockScreenActive;
+- (BOOL)shouldPreventBacklightBlankingForAlwaysOn;
+@end
+
+@interface SBBacklightController : NSObject
++ (instancetype)sharedInstance;
+- (void)animateBacklightToFactor:(float)factor duration:(double)duration source:(long long)source completion:(id)completion;
+- (float)backlightFactor;
+@end
+
+@interface BLSHBacklightStateMachine : NSObject
+- (long long)backlightState;
+- (BOOL)isAlwaysOnEnabled;
+- (BOOL)isAlwaysOnSuppressed;
+- (BOOL)isAlwaysOnDisabledByAssertion;
+@end
+
+@interface BLSHAlwaysOnPresentationEngine : NSObject
+- (BOOL)isSuppressed;
+- (void)setSuppressed:(BOOL)suppressed;
+- (BOOL)isUsingPseudoFlipbook;
+- (BOOL)alwaysFillFlipbook;
+@end
+
+@interface BLSHBacklightSceneHostEnvironment : NSObject
+- (BOOL)supportsAlwaysOn;
+- (BOOL)isAlwaysOnActive;
+- (long long)visualState;
+- (BOOL)isClientActive;
 @end
 
 @interface SBFLockScreenDateViewController : UIViewController
@@ -240,7 +310,7 @@ static void TriggerNotificationBoost(void) {
 - (BOOL)disablesDisplayBlanking { return isAODMasterEnabled() ? YES : %orig; }
 %end
 
-// Không chặn setBlanked thô bạo: Cho phép tắt khi che cảm biến hoặc bỏ túi
+// Không chặn setBlanked thô bạo: Cho phép tắt khi che cảm biến hoặc đút túi
 %hook BKDisplayManager
 - (void)setBlanked:(BOOL)blanked withReason:(id)reason {
     if (isAODMasterEnabled() && gCurrentState == AODStateActive && blanked) {
@@ -266,7 +336,7 @@ static void TriggerNotificationBoost(void) {
 }
 
 - (BOOL)isAlwaysOnDisabledByAssertion {
-    return %orig; // Cho phép tắt AOD khi có cuộc gọi đến, camera, báo thức
+    return %orig;
 }
 
 - (long long)backlightState {
@@ -274,7 +344,7 @@ static void TriggerNotificationBoost(void) {
     if (isAODMasterEnabled() && state == 0) {
         if (gCurrentState != AODStateProximityOff) {
             gCurrentState = AODStateActive;
-            return 2; // Ép giữ State 2 (AOD gốc)
+            return 2;
         }
     }
     if (state != 2 && state != 0) {
@@ -297,6 +367,43 @@ static void TriggerNotificationBoost(void) {
 
 %hook BLSHXPCBacklightProxyHost
 - (BOOL)isAlwaysOnEnabled { return isAODMasterEnabled() ? YES : %orig; }
+%end
+
+// Ép tốc độ tạo khung hình AOD theo thanh trượt phần cứng[span_3](start_span)[span_3](end_span)
+%hook BLSHFlipbookSpecification
+
+- (double)framesPerSecond {
+    if (isAODMasterEnabled()) {
+        return (double)getCustomAODRefreshRate();
+    }
+    return %orig;
+}
+
+- (id)initWithSoftMemoryLimit:(unsigned long long)arg1 
+                frameCapacity:(unsigned long long)arg2 
+              framesPerSecond:(double)fps 
+           minimumGapDuration:(double)arg4 
+             coaelscingEpsilon:(double)arg5 
+       minimumPrepareInterval:(double)arg6 
+        maximumRenderInterval:(double)arg7 {
+    if (isAODMasterEnabled()) {
+        fps = (double)getCustomAODRefreshRate();
+    }
+    return %orig(arg1, arg2, fps, arg4, arg5, arg6, arg7);
+}
+
+- (id)initWithFrameCapacity:(unsigned long long)arg1 
+            framesPerSecond:(double)fps 
+         minimumGapDuration:(double)arg3 
+           coaelscingEpsilon:(double)arg4 
+     minimumPrepareInterval:(double)arg5 
+      maximumRenderInterval:(double)arg6 {
+    if (isAODMasterEnabled()) {
+        fps = (double)getCustomAODRefreshRate();
+    }
+    return %orig(arg1, fps, arg3, arg4, arg5, arg6);
+}
+
 %end
 
 %hook BLSHAlwaysOnPresentationEngine
@@ -333,7 +440,7 @@ static void TriggerNotificationBoost(void) {
 %end // Group_Backboardd
 
 //==============================================================
-// 3. TẦNG SPRINGBOARD: MỞ KHÓA MƯỢT MÀ, KHÔNG TRANH CHẤP LUỒNG
+// 3. TẦNG SPRINGBOARD: MỞ KHÓA MƯỢT MÀ & CHỐNG ÁM MÀN VÔ HÌNH
 //==============================================================
 
 %group Group_SpringBoard
@@ -375,7 +482,7 @@ static void TriggerNotificationBoost(void) {
 }
 %end
 
-// 3.1 VÔ HIỆU HÓA POLICY HẠN CHẾ
+// Vô hiệu hóa Coordinator và các Policy hạn chế nội bộ
 %hook SBAlwaysOnPolicyCoordinator
 - (NSSet *)activePolicies {
     return isAODMasterEnabled() ? [NSSet set] : %orig;
@@ -406,7 +513,6 @@ static void TriggerNotificationBoost(void) {
 - (BOOL)isAlwaysOnPolicyActive { return NO; }
 %end
 
-// 3.2 GIAO DIỆN MÀN HÌNH KHÓA & NHẬN DIỆN VUỐT
 %hook CSCoverSheetViewController
 - (BOOL)isAlwaysOnPresentation { 
     return (isAODMasterEnabled() && gCurrentState == AODStateActive) ? YES : %orig; 
@@ -415,7 +521,6 @@ static void TriggerNotificationBoost(void) {
     return (isAODMasterEnabled() && gCurrentState == AODStateActive) ? YES : %orig; 
 }
 
-// Bắt sự kiện khi người dùng bắt đầu vuốt: Trả ngay quyền kiểm soát về Idle
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
     if (gCurrentState == AODStateActive) {
@@ -433,7 +538,6 @@ static void TriggerNotificationBoost(void) {
     %orig;
     if (isAODMasterEnabled()) {
         gCurrentState = AODStateActive;
-        // Bật cảm biến sau khi giao diện đã ổn định để tránh nghẽn Main Thread
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (gCurrentState == AODStateActive) {
                 [UIDevice currentDevice].proximityMonitoringEnabled = YES;
@@ -442,7 +546,7 @@ static void TriggerNotificationBoost(void) {
     }
 }
 
-// HÓA GIẢI LỖI VUỐT MỞ KHÓA: Trả trạng thái tự nhiên, TUYỆT ĐỐI KHÔNG ép animateBacklightToFactor
+// Khôi phục ngay độ sáng tự nhiên khi mở khóa máy, tránh kẹt màn hình đen[span_4](start_span)[span_4](end_span)
 - (void)unlockUIFromSource:(int)source withOptions:(id)options {
     gCurrentState = AODStateIdle;
     gHasActiveNotification = NO;
@@ -451,18 +555,27 @@ static void TriggerNotificationBoost(void) {
 }
 %end
 
-// Chống ám màn hình: Tịnh tiến vi mô ±0.5 px
+// CHỐNG ÁM MÀN HÌNH THEO QUỸ ĐẠO ELIP VI MÔ (0.35 px - KHÔNG BỊ PHÁT HIỆN)
 %hook SBFLockScreenDateViewController
 - (void)updateTimeNow {
     %orig;
     if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        gBurnInShiftCounter++;
-        CGFloat dx = (CGFloat)((gBurnInShiftCounter % 3) - 1) * 0.5f;
-        CGFloat dy = (CGFloat)(((gBurnInShiftCounter / 3) % 3) - 1) * 0.5f;
+        gBurnInShiftStep++;
         
-        [UIView animateWithDuration:0.5f animations:^{
+        // Tạo quỹ đạo vi mô elip 8 điểm xoay vòng
+        static const CGFloat kRadiusX = 0.35f;
+        static const CGFloat kRadiusY = 0.30f;
+        double angle = (gBurnInShiftStep % 8) * (M_PI / 4.0);
+        CGFloat dx = (CGFloat)(cos(angle) * kRadiusX);
+        CGFloat dy = (CGFloat)(sin(angle) * kRadiusY);
+        
+        // Chuyển động siêu mượt trong 1.2s, mắt thường không thấy độ lệch
+        [UIView animateWithDuration:1.2f 
+                              delay:0.0f 
+                            options:UIViewAnimationOptionCurveEaseInOut | UIViewAnimationOptionAllowUserInteraction 
+                         animations:^{
             self.view.transform = CGAffineTransformMakeTranslation(dx, dy);
-        }];
+        } completion:nil];
     } else {
         self.view.transform = CGAffineTransformIdentity;
     }
@@ -483,7 +596,7 @@ static void TriggerNotificationBoost(void) {
 }
 %end
 
-// ĐIỀU TIẾT ĐỘ SÁNG HÒA NHÃ: Không tranh chấp với luồng chuyển cảnh
+// Điều tiết độ sáng êm ái, nhả cờ ngay khi người dùng vuốt/chạm
 %hook SBBacklightController
 - (void)animateBacklightToFactor:(float)factor duration:(double)duration source:(long long)source completion:(id)completion {
     if (isAODMasterEnabled()) {
@@ -492,7 +605,6 @@ static void TriggerNotificationBoost(void) {
                 factor = getCustomAODBrightnessFactor();
             }
         }
-        // Khi người dùng chạm hoặc vuốt, factor được SpringBoard tăng lên (> 0.1f)
         if (factor > 0.1f) {
             gCurrentState = AODStateIdle;
         }
