@@ -5,6 +5,25 @@
 #import <IOKit/IOKitLib.h>
 
 //==============================================================
+// HÀM GHI LOG DEBUG RA FILE (/tmp/aodreal.log)
+//==============================================================
+static void AODLog(NSString *format, ...) {
+    va_list args;
+    va_start(args, format);
+    NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+    
+    NSString *logMessage = [NSString stringWithFormat:@"[AODREAL] %@\n", message];
+    const char *path = "/tmp/aodreal.log";
+    
+    FILE *file = fopen(path, "a");
+    if (file) {
+        fputs([logMessage UTF8String], file);
+        fclose(file);
+    }
+}
+
+//==============================================================
 // 0. KHAI BÁO GIAO THỨC, STRUCT VÀ INTERFACE NỘI BỘ
 //==============================================================
 
@@ -585,27 +604,36 @@ static void TriggerNotificationBoost(void) {
     // 1. Lấy tên class hiện tại để xác định xem có đúng là trang "Màn hình & Độ sáng" không
     NSString *className = NSStringFromClass([self class]);
     
+    // THÊM DÒNG LOG ĐỂ CHECK XEM ĐANG Ở TRANG NÀO
+    AODLog(@"Đang hook specifiers trong class: %@", className);
+    
     // Chấp nhận mọi class có chữ "Display", "Brightness", "DBR" hoặc "Appearance"
     if ([className containsString:@"Display"] || 
         [className containsString:@"Brightness"] || 
         [className containsString:@"DBR"] ||
         [className containsString:@"Appearance"]) {
         
+        AODLog(@"=> ĐÃ TÌM THẤY TRANG MÀN HÌNH & ĐỘ SÁNG! Tiến hành chèn AOD...");
+        
         static NSString *const kAODID = @"ALWAYS_ON_DISPLAY";
         
         // 2. Kiểm tra xem đã chèn chưa để tránh trùng lặp
         for (PSSpecifier *s in specs) {
             if ([[s propertyForKey:@"id"] isEqualToString:kAODID]) {
+                AODLog(@"=> Đã có mục AOD từ trước, bỏ qua.");
                 return specs;
             }
         }
 
         // 3. Tạo Specifier (Ép cứng tên class AODREALRootListController của Preference Bundle)
+        Class detailClass = NSClassFromString(@"AODREALRootListController");
+        AODLog(@"=> Class AODREALRootListController có tồn tại không? %@", detailClass ? @"CÓ" : @"KHÔNG");
+
         PSSpecifier *aodSpec = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình luôn bật (AOD)"
                                                                   target:self
                                                                      set:NULL
                                                                      get:NULL
-                                                                  detail:NSClassFromString(@"AODREALRootListController")
+                                                                  detail:detailClass
                                                                     cell:2 // PSLinkCell (có mũi tên chuyển trang)
                                                                     edit:Nil];
         
@@ -626,8 +654,10 @@ static void TriggerNotificationBoost(void) {
 
         if (insertIdx >= 0 && insertIdx <= specs.count) {
             [specs insertObject:aodSpec atIndex:insertIdx];
+            AODLog(@"=> Đã chèn AOD vào vị trí index: %ld", (long)insertIdx);
         } else {
             [specs addObject:aodSpec]; // Nếu không tìm thấy mốc, chèn xuống cuối
+            AODLog(@"=> Không thấy mốc AUTOLOCK, đã chèn AOD xuống cuối.");
         }
     }
     return specs;
@@ -635,6 +665,7 @@ static void TriggerNotificationBoost(void) {
 %end
 
 %end // Group_Preferences
+
 //==============================================================
 // 6. CONSTRUCTOR: KHỞI TẠO ĐỒNG LOẠT VÀ NẠP NGAY LẬP TỨC
 //==============================================================
@@ -644,6 +675,9 @@ static void TriggerNotificationBoost(void) {
         NSString *processName = [[NSProcessInfo processInfo] processName];
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
 
+        // THÊM DÒNG LOG NÀY ĐỂ CHECK XEM TWEAK CÓ ĐANG CHẠY TRONG PROCESS ĐÓ KHÔNG
+        AODLog(@"Tweak vừa được nạp vào Process: %@ | Bundle: %@", processName, bundleID);
+
         if ([bundleID isEqualToString:@"com.apple.springboard"]) {
             %init(Group_SpringBoard);
         } else if ([bundleID isEqualToString:@"com.apple.PosterBoard"]) {
@@ -652,6 +686,7 @@ static void TriggerNotificationBoost(void) {
             %init(Group_Backboardd);
         } else if ([bundleID isEqualToString:@"com.apple.Preferences"] || 
                    [processName isEqualToString:@"Preferences"]) {
+            AODLog(@">>> ĐANG KHỞI TẠO GIAO DIỆN TRONG APP CÀI ĐẶT <<<");
             %init(Group_Preferences);
         }
     }
