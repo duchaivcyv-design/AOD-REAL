@@ -122,8 +122,14 @@ extern void FBSSystemServiceRespring(void);
         }
     }
 
-    // Cách 4: Fallback hệ thống
-    system("killall -9 SpringBoard");
+    // Cách 4: Fallback bằng Darwin Notification chuẩn iOS (không dùng hàm system() bị cấm)
+    CFNotificationCenterPostNotification(
+        CFNotificationCenterGetDarwinNotifyCenter(),
+        CFSTR("com.apple.springboard.relaunch"),
+        NULL,
+        NULL,
+        YES
+    );
 }
 
 @end
