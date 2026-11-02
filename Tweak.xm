@@ -6,12 +6,12 @@
 #import <objc/runtime.h>
 
 //==============================================================
-// 0. BỘ ĐIỀU PHỐI TRẠNG THÁI & ĐỌC CÀI ĐẶT
+// 0. BỘ ĐIỀU PHỐI TRẠNG THÁI & ĐỌC CÀI ĐẶT CHUẨN XÁC
 //==============================================================
 
 typedef NS_ENUM(NSInteger, AODState) {
-    AODStateIdle = 0,       // Màn hình sáng bình thường / Đang mở khóa
-    AODStateTransitioning,  // Đang fade mượt vào AOD (0.45s)
+    AODStateIdle = 0,       // Màn hình sáng bình thường / Đang dùng
+    AODStateTransitioning,  // Đang chạy animation lặn dần vào AOD (0.45s)
     AODStateActive,        // Đang hiển thị AOD tĩnh
     AODStateProximityOff   // Đang đút túi / Úp màn hình (Tắt đèn nền về 0)
 };
@@ -25,6 +25,9 @@ static id gInjectedSessionProvider = nil;
 static inline BOOL isTopAODMasterEnabled(void) {
     Boolean valid = false;
     Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("AlwaysOnDisplayEnabled"), CFSTR("com.apple.BacklightServices"), &valid);
+    if (!valid) {
+        val = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.apple.BacklightServices"), &valid);
+    }
     if (!valid) {
         val = CFPreferencesGetAppBooleanValue(CFSTR("AlwaysOnDisplayEnabled"), CFSTR("com.jb.aodreal"), &valid);
     }
@@ -65,14 +68,31 @@ static inline BOOL isBottomAODEnabled(void) {
     return valid ? (BOOL)val : YES;
 }
 
-// Kiểm tra trạng thái hoạt động chung của AOD
+// Kiểm tra toàn cục: Khi cả 2 công tắc AOD đều cho phép chạy
 static inline BOOL isAODFullyActive(void) {
     return isTopAODMasterEnabled() && isBottomAODEnabled();
 }
 
+static inline float getCustomAODRefreshRate(void) {
+    CFPropertyListRef val = CFPreferencesCopyAppValue(CFSTR("CustomAODRefreshRate"), CFSTR("com.jb.aodreal"));
+    if (val && CFGetTypeID(val) == CFNumberGetTypeID()) {
+        float rate = [(__bridge NSNumber *)val floatValue];
+        CFRelease(val);
+        if (rate >= 2.0f && rate <= 30.0f) return rate;
+    }
+    if (val) CFRelease(val);
+    return 2.0f;
+}
+
 static inline float getAODPanelBrightnessFactor(void) {
-    // Đủ độ sáng nuôi panel và giữ đồng hồ, widget sáng rực
-    return 0.08f;
+    CFPropertyListRef val = CFPreferencesCopyAppValue(CFSTR("CustomAODBrightness"), CFSTR("com.jb.aodreal"));
+    if (val && CFGetTypeID(val) == CFNumberGetTypeID()) {
+        float level = [(__bridge NSNumber *)val floatValue];
+        CFRelease(val);
+        if (level >= 1.0f && level <= 30.0f) return level / 1000.0f;
+    }
+    if (val) CFRelease(val);
+    return 0.08f; // Đảm bảo đồng hồ, widget sáng rực rỡ, không bị chìm tối
 }
 
 //==============================================================
@@ -90,9 +110,16 @@ static inline float getAODPanelBrightnessFactor(void) {
 - (NSMutableArray *)specifiers;
 - (void)insertSpecifier:(PSSpecifier *)specifier atIndex:(NSInteger)index animated:(BOOL)animated;
 - (void)addSpecifier:(PSSpecifier *)specifier animated:(BOOL)animated;
+- (void)reloadSpecifiers;
 @end
 
 @interface DBSAlwaysOnViewController : PSListController
+- (PSSpecifier *)_alwaysOnDisplaySpecifier;
+- (PSSpecifier *)_showWallpaperSpecifier;
+- (PSSpecifier *)_showNotificationsSpecifier;
+- (void)_updatesForSpecifiers:(id)arg1 isAlwaysOnEnabled:(BOOL)enabled animated:(BOOL)animated;
+- (id)isAlwaysOnEnabled:(PSSpecifier *)specifier;
+- (void)setAlwaysOnDisplayEnabled:(id)value specifier:(PSSpecifier *)specifier;
 @end
 
 @interface BLSHFlipbookSpecification : NSObject
@@ -120,6 +147,40 @@ static inline float getAODPanelBrightnessFactor(void) {
 - (BOOL)supportsAlwaysOn;
 - (BOOL)isDisplayBlanked;
 - (long long)visualState;
+@end
+
+@interface SBAlwaysOnPolicyCoordinator : NSObject
+- (NSSet *)activePolicies;
+- (void)_activatePolicy:(id)policy;
+@end
+
+@interface SBFocusModeAlwaysOnPolicy : NSObject
+- (BOOL)isAlwaysOnPolicyActive;
+@end
+
+@interface SBLowPowerModeAlwaysOnPolicy : NSObject
+- (BOOL)isAlwaysOnPolicyActive;
+@end
+
+@interface SBSetupAlwaysOnPolicy : NSObject
+- (BOOL)isAlwaysOnPolicyActive;
+@end
+
+@interface SBThermalAlwaysOnPolicy : NSObject
+- (BOOL)isAlwaysOnPolicyActive;
+@end
+
+@interface SBLockScreenService : NSObject
+- (BOOL)isAlwaysOnPolicyActive;
+@end
+
+@interface BLSHBacklightTransitionStateMachine : NSObject
+- (BOOL)isAlwaysOnEnabled;
+- (BOOL)isAlwaysOnSuppressed;
+@end
+
+@interface BLSHXPCBacklightProxyHost : NSObject
+- (BOOL)isAlwaysOnEnabled;
 @end
 
 @interface CAWindowServerDisplay : NSObject
@@ -456,6 +517,13 @@ static inline float getAODPanelBrightnessFactor(void) {
 - (BOOL)isAlwaysOnEnabled { return isAODFullyActive() ? YES : %orig; }
 %end
 
+%hook BLSHFlipbookSpecification
+- (double)framesPerSecond {
+    if (isAODFullyActive()) return (double)getCustomAODRefreshRate();
+    return %orig;
+}
+%end
+
 %hook BLSHAlwaysOnPresentationEngine
 - (BOOL)isSuppressed {
     if (isAODFullyActive()) return (gCurrentState == AODStateProximityOff) ? YES : %orig;
@@ -635,6 +703,29 @@ static id gCachedFlipbookSpec = nil;
 }
 %end
 
+%hook CSComplicationContainerViewController
+- (NSArray *)sceneHostEnvironmentEntriesForBacklightSession {
+    return %orig;
+}
+
+- (id)vibrancyConfiguration {
+    id orig = %orig;
+    if (isAODFullyActive() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+        // Giữ Widget sáng rõ, không bị mờ đục
+        if (orig && [orig respondsToSelector:@selector(copyWithLuminanceReduced:)]) {
+            return [orig performSelector:@selector(copyWithLuminanceReduced:) withObject:@(NO)];
+        }
+    }
+    return orig;
+}
+%end
+
+%hook CSActivityItemViewController
+- (NSArray *)sceneHostEnvironmentEntriesForBacklightSession {
+    return %orig;
+}
+%end
+
 // ĐỒNG HỒ & WIDGET SÁNG RỰC RỠ: Không bị dìm tối theo hình nền
 %hook SBFLockScreenDateView
 - (id)vibrancyConfiguration {
@@ -667,16 +758,33 @@ static id gCachedFlipbookSpec = nil;
 }
 %end
 
-%hook CSComplicationContainerViewController
-- (id)vibrancyConfiguration {
-    id orig = %orig;
+%hook SBLockScreenViewControllerBase
+- (void)setBacklightLevel:(float)level {
     if (isAODFullyActive() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-        // Giữ Widget sáng rõ, không bị mờ đục
-        if (orig && [orig respondsToSelector:@selector(copyWithLuminanceReduced:)]) {
-            return [orig performSelector:@selector(copyWithLuminanceReduced:) withObject:@(NO)];
-        }
+        %orig(getAODPanelBrightnessFactor() * 100.0f);
+        return;
     }
-    return orig;
+    %orig(level);
+}
+%end
+
+%hook SBDashBoardLockScreenEnvironment
+- (void)setBacklightLevel:(float)level {
+    if (isAODFullyActive() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+        %orig(getAODPanelBrightnessFactor() * 100.0f);
+        return;
+    }
+    %orig(level);
+}
+%end
+
+%hook UIApplication
+- (void)setBacklightLevel:(float)level {
+    if (isAODFullyActive() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+        %orig(getAODPanelBrightnessFactor() * 100.0f);
+        return;
+    }
+    %orig(level);
 }
 %end
 
@@ -1023,7 +1131,7 @@ static void AODInjectIntoList(PSListController *list) {
 }
 %end
 
-// XÂY DỰNG LẠI DANH SÁCH ĐÚNG CHUẨN 5 CÔNG TẮC THEO VIDEO MẪU (KHÔNG BỊ LẶP)
+// XÂY DỰNG LẠI DANH SÁCH ĐÚNG CHUẨN 5 CÔNG TẮC THEO VIDEO MẪU
 %hook DBSAlwaysOnViewController
 
 - (NSMutableArray *)specifiers {
@@ -1044,7 +1152,7 @@ static void AODInjectIntoList(PSListController *list) {
     [topAOD setProperty:@"TOP_ALWAYS_ON_KEY" forKey:@"id"];
     [specs addObject:topAOD];
 
-    // --- NHÓM 2: CUSTOMIZE (CHỨA ĐỦ 3 CÔNG TẮC GỐC + BLUR NHƯ VIDEO) ---
+    // --- NHÓM 2: CUSTOMIZE (CHỨA ĐỦ 3 CÔNG TẮC THEO VIDEO MẪU) ---
     PSSpecifier *customizeGroup = [%c(PSSpecifier) groupSpecifierWithName:@"Customize"];
     [customizeGroup setProperty:@"The display will turn off automatically to save battery life when not in use." forKey:@"footerText"];
     [specs addObject:customizeGroup];
@@ -1097,10 +1205,31 @@ static void AODInjectIntoList(PSListController *list) {
     [bottomAOD setProperty:@"BOTTOM_ALWAYS_ON_KEY" forKey:@"id"];
     [specs addObject:bottomAOD];
 
+    // --- NHÓM 4: CẤU HÌNH PHẦN CỨNG TẦNG SÂU (GIỮ NGUYÊN KHÔNG CẮT BỎ) ---
+    PSSpecifier *hardwareGroup = [%c(PSSpecifier) groupSpecifierWithName:@"CẤU HÌNH PHẦN CỨNG TẦNG SÂU (2-30)"];
+    [hardwareGroup setProperty:@"Ép phần cứng hạ xung nhịp và độ sáng xuống mức tối thiểu khi khóa màn hình." forKey:@"footerText"];
+    [specs addObject:hardwareGroup];
+
+    PSSpecifier *hzSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Tần số quét tĩnh (2-30 Hz)"
+                                                               target:self set:@selector(setCustomHz:spec:) get:@selector(getCustomHz:) detail:Nil cell:5 edit:Nil];
+    [hzSlider setProperty:@"AOD_CUSTOM_HZ_KEY" forKey:@"id"];
+    [hzSlider setProperty:@(2.0f) forKey:@"min"];
+    [hzSlider setProperty:@(30.0f) forKey:@"max"];
+    [hzSlider setProperty:@YES forKey:@"showValue"];
+    [specs addObject:hzSlider];
+
+    PSSpecifier *brightSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Độ sáng AOD (Mức 1-30)"
+                                                                   target:self set:@selector(setCustomBrightness:spec:) get:@selector(getCustomBrightness:) detail:Nil cell:5 edit:Nil];
+    [brightSlider setProperty:@"AOD_CUSTOM_BRIGHTNESS_KEY" forKey:@"id"];
+    [brightSlider setProperty:@(1.0f) forKey:@"min"];
+    [brightSlider setProperty:@(30.0f) forKey:@"max"];
+    [brightSlider setProperty:@YES forKey:@"showValue"];
+    [specs addObject:brightSlider];
+
     return specs;
 }
 
-// GETTER & SETTER CHO 5 CÔNG TẮC
+// GETTER & SETTER CHO CÁC CÔNG TẮC & SLIDER
 
 %new
 - (void)setTopAOD:(id)value spec:(PSSpecifier *)spec {
@@ -1157,6 +1286,26 @@ static void AODInjectIntoList(PSListController *list) {
 
 %new
 - (id)getBottomAOD:(PSSpecifier *)spec { return @(isBottomAODEnabled()); }
+
+%new
+- (void)setCustomHz:(id)value spec:(PSSpecifier *)spec {
+    CFPreferencesSetAppValue(CFSTR("CustomAODRefreshRate"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
+    CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
+}
+
+%new
+- (id)getCustomHz:(PSSpecifier *)spec { return @(getCustomAODRefreshRate()); }
+
+%new
+- (void)setCustomBrightness:(id)value spec:(PSSpecifier *)spec {
+    CFPreferencesSetAppValue(CFSTR("CustomAODBrightness"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
+    CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
+}
+
+%new
+- (id)getCustomBrightness:(PSSpecifier *)spec { return @(getAODPanelBrightnessFactor() * 1000.0f); }
 
 %end
 
