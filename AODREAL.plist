@@ -1,12 +1,11 @@
 {
     Filter = {
         Bundles = (
-            "com.apple.springboard",
             "com.apple.Preferences",
-            "com.apple.PosterBoard"
+            "com.apple.DisplayAndBrightnessSettings",
+            "com.apple.springboard",
+            "com.apple.BacklightServicesHost"
         );
-        Executables = (
-            "backboardd"
-        );
+        Executables = ( "backboardd" );
     };
 }
