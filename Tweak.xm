@@ -5,32 +5,11 @@
 #import <IOKit/IOKitLib.h>
 
 //==============================================================
-// HÀM GHI LOG DEBUG RA FILE (/tmp/aodreal.log)
-//==============================================================
-static void AODLog(NSString *format, ...) {
-    va_list args;
-    va_start(args, format);
-    NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
-    va_end(args);
-    
-    NSString *logMessage = [NSString stringWithFormat:@"[AODREAL] %@\n", message];
-    const char *paths[] = { "/tmp/aodreal.log", "/var/mobile/Library/Preferences/aodreal.log" };
-    for (int i = 0; i < 2; i++) {
-        FILE *file = fopen(paths[i], "a");
-        if (file) {
-            fputs([logMessage UTF8String], file);
-            fclose(file);
-            break;
-        }
-    }
-}
-
-//==============================================================
-// 0. BỘ ĐIỀU PHỐI TRẠNG THÁI TRUNG TÂM & TIỆN ÍCH
+// 0. BỘ ĐIỀU PHỐI TRẠNG THÁI TRUNG TÂM
 //==============================================================
 
 typedef NS_ENUM(NSInteger, AODState) {
-    AODStateIdle = 0,       // Máy đang dùng / Đã mở khóa
+    AODStateIdle = 0,       // Đang dùng / Mở khóa
     AODStateActive,        // Đang hiển thị AOD tĩnh
     AODStateProximityOff   // Đang che cảm biến / Bỏ túi
 };
@@ -41,11 +20,7 @@ static NSInteger gBurnInShiftStep = 0;
 
 static inline BOOL isAODMasterEnabled(void) {
     Boolean valid = false;
-    Boolean val = CFPreferencesGetAppBooleanValue(
-        CFSTR("enabled"),
-        CFSTR("com.jb.aodreal"),
-        &valid
-    );
+    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.jb.aodreal"), &valid);
     if (!valid) return YES;
     return (BOOL)val;
 }
@@ -74,36 +49,20 @@ static inline float getCustomAODBrightnessFactor(void) {
 
 static inline BOOL isWallpaperEnabled(void) {
     Boolean valid = false;
-    Boolean val = CFPreferencesGetAppBooleanValue(
-        CFSTR("ShowWallpaperInAlwaysOn"),
-        CFSTR("com.apple.BacklightServices"),
-        &valid
-    );
+    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("ShowWallpaperInAlwaysOn"), CFSTR("com.apple.BacklightServices"), &valid);
     if (!valid) return YES;
     return (BOOL)val;
 }
 
 static inline BOOL isNotificationsEnabled(void) {
     Boolean valid = false;
-    Boolean val = CFPreferencesGetAppBooleanValue(
-        CFSTR("ShowNotificationsInAlwaysOn"),
-        CFSTR("com.apple.BacklightServices"),
-        &valid
-    );
+    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("ShowNotificationsInAlwaysOn"), CFSTR("com.apple.BacklightServices"), &valid);
     if (!valid) return YES;
     return (BOOL)val;
 }
 
-static void TriggerNotificationBoost(void) {
-    if (!isAODMasterEnabled() || gCurrentState != AODStateActive) return;
-    gHasActiveNotification = YES;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        gHasActiveNotification = NO;
-    });
-}
-
 //==============================================================
-// 1. KHAI BÁO TOÀN BỘ CÁC LỚP HỆ THỐNG ĐỂ BUILD THEOS KHÔNG LỖI
+// 1. KHAI BÁO CÁC LỚP HỆ THỐNG
 //==============================================================
 
 @interface PSSpecifier : NSObject
@@ -116,7 +75,6 @@ static void TriggerNotificationBoost(void) {
 - (NSMutableArray *)specifiers;
 - (void)insertSpecifier:(PSSpecifier *)specifier atIndex:(NSInteger)index animated:(BOOL)animated;
 - (void)addSpecifier:(PSSpecifier *)specifier animated:(BOOL)animated;
-- (NSInteger)indexOfSpecifier:(PSSpecifier *)specifier;
 @end
 
 @interface DBSAlwaysOnViewController : PSListController
@@ -138,7 +96,6 @@ static void TriggerNotificationBoost(void) {
 - (void)_activatePolicy:(id)policy;
 @end
 
-// Bổ sung đầy đủ các policy con nội bộ của SpringBoard
 @interface SBFocusModeAlwaysOnPolicy : NSObject
 - (BOOL)isAlwaysOnPolicyActive;
 @end
@@ -159,7 +116,6 @@ static void TriggerNotificationBoost(void) {
 - (BOOL)isAlwaysOnPolicyActive;
 @end
 
-// Khai báo các subsystem chuyển tiếp của backboardd
 @interface BLSHBacklightTransitionStateMachine : NSObject
 - (BOOL)isAlwaysOnEnabled;
 - (BOOL)isAlwaysOnSuppressed;
@@ -190,6 +146,7 @@ static void TriggerNotificationBoost(void) {
 @interface CSCoverSheetViewController : UIViewController
 - (BOOL)isAlwaysOnPresentation;
 - (BOOL)shouldDimForAlwaysOn;
+- (void)updateAlwaysOnPresentationAnimated:(BOOL)animated;
 @end
 
 @interface SBLockScreenManager : NSObject
@@ -228,93 +185,67 @@ static void TriggerNotificationBoost(void) {
 @interface SBFLockScreenDateViewController : UIViewController
 @end
 
+// Thêm khai báo các class Backboard & Driver
+@interface BKDisplayRenderOverlay : NSObject
+- (BOOL)disablesDisplayBlanking;
+@end
+
+@interface BKDisplayManager : NSObject
+- (void)setBlanked:(BOOL)blanked withReason:(id)reason;
+@end
+
+// Thêm khai báo các class PosterBoard
+@interface PRRenderingBacklightEnvironment : NSObject
+- (BOOL)supportsAlwaysOn;
+- (BOOL)isAlwaysOnActive;
+@end
+
+@interface PRPosterEnvironmentImpl : NSObject
+- (long long)backlightLuminance;
+@end
+
+// Thêm khai báo các class Preferences / CoreBrightness / BacklightServices
+@interface BLSBacklight : NSObject
++ (BOOL)isAlwaysOnEnabledByHardware;
+@end
+
+@interface BLSAlwaysOnFrequencyConfiguration : NSObject
+- (BOOL)isAlwaysOnEnabled;
+@end
+
+@interface CBDisplayModule : NSObject
++ (BOOL)isAlwaysOnDisplaySupported;
+@end
+
+// Bổ sung method cho SBLockScreenManager (nếu cần gọi tường minh)
+@interface SBLockScreenManager (AODExtension)
+- (void)lockUIFromSource:(int)source withOptions:(id)options;
+- (void)unlockUIFromSource:(int)source withOptions:(id)options;
+@end
+
+// Macro ghi log gọn nhẹ để debug nếu cần
+#ifdef DEBUG
+  #define AODLog(fmt, ...) NSLog((@"[AODReal] " fmt), ##__VA_ARGS__)
+#else
+  #define AODLog(...)
+#endif
+
 //==============================================================
 // 2. TẦNG BACKBOARDD & DRIVER PHẦN CỨNG
 //==============================================================
 
 %group Group_Backboardd
 
-%hookf(kern_return_t, IORegistryEntryCreateCFProperties, io_registry_entry_t entry, CFMutableDictionaryRef *properties, CFAllocatorRef allocator, uint32_t options) {
-    kern_return_t ret = %orig(entry, properties, allocator, options);
-    if (ret == KERN_SUCCESS && properties && *properties && isAODMasterEnabled()) {
-        int customRate = (int)getCustomAODRefreshRate();
-        int minRate = 2;
-        int maxRate = 60;
-        
-        CFNumberRef rateNum = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &customRate);
-        CFNumberRef minRateNum = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &minRate);
-        CFNumberRef maxRateNum = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &maxRate);
-
-        CFDictionarySetValue(*properties, CFSTR("supports-aod"), kCFBooleanTrue);
-        CFDictionarySetValue(*properties, CFSTR("supports-variable-refresh-rate"), kCFBooleanTrue);
-        CFDictionarySetValue(*properties, CFSTR("supports-arbitrary-frame-rates"), kCFBooleanTrue);
-        CFDictionarySetValue(*properties, CFSTR("timing-sample-rate"), rateNum);
-        CFDictionarySetValue(*properties, CFSTR("min-refresh-rate"), minRateNum);
-        CFDictionarySetValue(*properties, CFSTR("max-refresh-rate"), maxRateNum);
-        CFDictionarySetValue(*properties, CFSTR("target-refresh-rate"), rateNum);
-        CFDictionarySetValue(*properties, CFSTR("IOMFBSupportsAOD"), kCFBooleanTrue);
-
-        CFRelease(rateNum);
-        CFRelease(minRateNum);
-        CFRelease(maxRateNum);
-    }
-    return ret;
-}
-
-%hook CAWindowServerDisplay
-- (BOOL)supportsVariableRefreshRate { return isAODMasterEnabled() ? YES : %orig; }
-- (BOOL)supportsLowPowerRefreshRate { return isAODMasterEnabled() ? YES : %orig; }
-- (BOOL)supportsArbitraryFrameRates { return isAODMasterEnabled() ? YES : %orig; }
-- (float)refreshRate {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        return gHasActiveNotification ? 50.0f : getCustomAODRefreshRate();
-    }
-    return %orig;
-}
-- (void)setRefreshRate:(float)rate {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        %orig(gHasActiveNotification ? 50.0f : getCustomAODRefreshRate());
-        return;
-    }
-    %orig(rate);
-}
-- (float)lowPowerRefreshRate {
-    if (isAODMasterEnabled()) return getCustomAODRefreshRate();
-    return %orig;
-}
-- (void)setLowPowerRefreshRate:(float)arg1 {
-    if (isAODMasterEnabled()) { %orig(getCustomAODRefreshRate()); return; }
-    %orig(arg1);
-}
-%end
-
-%hook CADisplay
-- (CAFrameRateRange)preferredFrameRateRange {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        float targetHz = gHasActiveNotification ? 50.0f : getCustomAODRefreshRate();
-        return CAFrameRateRangeMake(targetHz, targetHz, targetHz);
-    }
-    return %orig;
-}
-- (void)setPreferredFrameRateRange:(CAFrameRateRange)range {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        float targetHz = gHasActiveNotification ? 50.0f : getCustomAODRefreshRate();
-        %orig(CAFrameRateRangeMake(targetHz, targetHz, targetHz));
-        return;
-    }
-    %orig(range);
-}
-%end
-
 %hook BKDisplayRenderOverlay
 - (BOOL)disablesDisplayBlanking { return isAODMasterEnabled() ? YES : %orig; }
 %end
 
-// Không chặn setBlanked thô bạo: Cho phép tắt khi che cảm biến hoặc đút túi
+// FIX QUAN TRỌNG: Chặn dập tắt màn hình nếu AOD Master đang bật và không bị che tiệm cận
 %hook BKDisplayManager
 - (void)setBlanked:(BOOL)blanked withReason:(id)reason {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && blanked) {
+    if (isAODMasterEnabled() && blanked) {
         if (gCurrentState != AODStateProximityOff) {
+            // Không cho phép driver dập tắt tín hiệu màn hình
             %orig(NO, reason);
             return;
         }
@@ -324,9 +255,7 @@ static void TriggerNotificationBoost(void) {
 %end
 
 %hook BLSHBacklightStateMachine
-- (BOOL)isAlwaysOnEnabled {
-    return isAODMasterEnabled() ? YES : %orig;
-}
+- (BOOL)isAlwaysOnEnabled { return isAODMasterEnabled() ? YES : %orig; }
 
 - (BOOL)isAlwaysOnSuppressed {
     if (isAODMasterEnabled()) {
@@ -335,12 +264,11 @@ static void TriggerNotificationBoost(void) {
     return %orig;
 }
 
-- (BOOL)isAlwaysOnDisabledByAssertion {
-    return %orig;
-}
+- (BOOL)isAlwaysOnDisabledByAssertion { return %orig; }
 
 - (long long)backlightState {
     long long state = %orig;
+    // Bắt đầu chu trình tắt màn hình -> Ép giữ State 2 (AOD)
     if (isAODMasterEnabled() && state == 0) {
         if (gCurrentState != AODStateProximityOff) {
             gCurrentState = AODStateActive;
@@ -369,51 +297,26 @@ static void TriggerNotificationBoost(void) {
 - (BOOL)isAlwaysOnEnabled { return isAODMasterEnabled() ? YES : %orig; }
 %end
 
-// Ép tốc độ tạo khung hình AOD theo thanh trượt phần cứng[span_3](start_span)[span_3](end_span)
 %hook BLSHFlipbookSpecification
-
 - (double)framesPerSecond {
-    if (isAODMasterEnabled()) {
-        return (double)getCustomAODRefreshRate();
-    }
+    if (isAODMasterEnabled()) return (double)getCustomAODRefreshRate();
     return %orig;
 }
-
-- (id)initWithSoftMemoryLimit:(unsigned long long)arg1 
-                frameCapacity:(unsigned long long)arg2 
-              framesPerSecond:(double)fps 
-           minimumGapDuration:(double)arg4 
-             coaelscingEpsilon:(double)arg5 
-       minimumPrepareInterval:(double)arg6 
-        maximumRenderInterval:(double)arg7 {
-    if (isAODMasterEnabled()) {
-        fps = (double)getCustomAODRefreshRate();
-    }
+- (id)initWithSoftMemoryLimit:(unsigned long long)arg1 frameCapacity:(unsigned long long)arg2 framesPerSecond:(double)fps minimumGapDuration:(double)arg4 coaelscingEpsilon:(double)arg5 minimumPrepareInterval:(double)arg6 maximumRenderInterval:(double)arg7 {
+    if (isAODMasterEnabled()) fps = (double)getCustomAODRefreshRate();
     return %orig(arg1, arg2, fps, arg4, arg5, arg6, arg7);
 }
-
-- (id)initWithFrameCapacity:(unsigned long long)arg1 
-            framesPerSecond:(double)fps 
-         minimumGapDuration:(double)arg3 
-           coaelscingEpsilon:(double)arg4 
-     minimumPrepareInterval:(double)arg5 
-      maximumRenderInterval:(double)arg6 {
-    if (isAODMasterEnabled()) {
-        fps = (double)getCustomAODRefreshRate();
-    }
+- (id)initWithFrameCapacity:(unsigned long long)arg1 framesPerSecond:(double)fps minimumGapDuration:(double)arg3 coaelscingEpsilon:(double)arg4 minimumPrepareInterval:(double)arg5 maximumRenderInterval:(double)arg6 {
+    if (isAODMasterEnabled()) fps = (double)getCustomAODRefreshRate();
     return %orig(arg1, fps, arg3, arg4, arg5, arg6);
 }
-
 %end
 
 %hook BLSHAlwaysOnPresentationEngine
 - (BOOL)isSuppressed {
-    if (isAODMasterEnabled()) {
-        return (gCurrentState == AODStateProximityOff) ? YES : %orig;
-    }
+    if (isAODMasterEnabled()) return (gCurrentState == AODStateProximityOff) ? YES : %orig;
     return %orig;
 }
-
 - (void)setSuppressed:(BOOL)suppressed {
     if (isAODMasterEnabled() && gCurrentState != AODStateProximityOff && suppressed) {
         %orig(NO);
@@ -421,7 +324,6 @@ static void TriggerNotificationBoost(void) {
     }
     %orig(suppressed);
 }
-
 - (BOOL)isUsingPseudoFlipbook { return isAODMasterEnabled() ? YES : %orig; }
 - (BOOL)alwaysFillFlipbook { return isAODMasterEnabled() ? YES : %orig; }
 %end
@@ -440,7 +342,7 @@ static void TriggerNotificationBoost(void) {
 %end // Group_Backboardd
 
 //==============================================================
-// 3. TẦNG SPRINGBOARD: MỞ KHÓA MƯỢT MÀ & CHỐNG ÁM MÀN VÔ HÌNH
+// 3. TẦNG SPRINGBOARD: KÍCH HOẠT SỚM NGAY LÚC BẤM NÚT NGUỒN
 //==============================================================
 
 %group Group_SpringBoard
@@ -449,44 +351,35 @@ static void TriggerNotificationBoost(void) {
 - (BOOL)deviceSupportsAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
 - (BOOL)isAlwaysOnEnabled { return isAODMasterEnabled() ? YES : %orig; }
 
+// Chặn cửa sổ đen che màn hình khi AOD được bật
 - (BOOL)isShowingBlankingWindow {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        return NO;
-    }
+    if (isAODMasterEnabled() && gCurrentState != AODStateProximityOff) return NO;
     return %orig;
 }
 
 - (void)showBlankingWindow:(BOOL)show withFadeDuration:(double)duration {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && show) {
-        if (gCurrentState != AODStateProximityOff) {
-            return;
-        }
+    if (isAODMasterEnabled() && show) {
+        if (gCurrentState != AODStateProximityOff) return; // Chặn dập đen
     }
     %orig(show, duration);
 }
 
 - (void)_setBlankingWindowVisible:(BOOL)visible fadeDuration:(double)duration {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && visible) {
-        if (gCurrentState != AODStateProximityOff) {
-            return;
-        }
+    if (isAODMasterEnabled() && visible) {
+        if (gCurrentState != AODStateProximityOff) return;
     }
     %orig(visible, duration);
 }
 
 - (BOOL)isUsingAlwaysOnBrightnessCurve {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        return YES;
-    }
+    if (isAODMasterEnabled() && gCurrentState != AODStateProximityOff) return YES;
     return %orig;
 }
 %end
 
-// Vô hiệu hóa Coordinator và các Policy hạn chế nội bộ
+// Vô hiệu hóa toàn bộ Coordinator & Policy hạn chế
 %hook SBAlwaysOnPolicyCoordinator
-- (NSSet *)activePolicies {
-    return isAODMasterEnabled() ? [NSSet set] : %orig;
-}
+- (NSSet *)activePolicies { return isAODMasterEnabled() ? [NSSet set] : %orig; }
 - (void)_activatePolicy:(id)policy {
     if (isAODMasterEnabled()) return;
     %orig(policy);
@@ -520,12 +413,9 @@ static void TriggerNotificationBoost(void) {
 - (BOOL)shouldDimForAlwaysOn { 
     return (isAODMasterEnabled() && gCurrentState == AODStateActive) ? YES : %orig; 
 }
-
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
-    if (gCurrentState == AODStateActive) {
-        gCurrentState = AODStateIdle;
-    }
+    if (gCurrentState == AODStateActive) gCurrentState = AODStateIdle;
 }
 %end
 
@@ -534,10 +424,13 @@ static void TriggerNotificationBoost(void) {
     return (isAODMasterEnabled() && gCurrentState != AODStateProximityOff) ? YES : %orig; 
 }
 
+// BẮT SỚM: Bấm nút nguồn lập tức chuyển gCurrentState sang Active
 - (void)lockUIFromSource:(int)source withOptions:(id)options {
+    if (isAODMasterEnabled()) {
+        gCurrentState = AODStateActive; // Đổi cờ NGAY LẬP TỨC
+    }
     %orig;
     if (isAODMasterEnabled()) {
-        gCurrentState = AODStateActive;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (gCurrentState == AODStateActive) {
                 [UIDevice currentDevice].proximityMonitoringEnabled = YES;
@@ -546,7 +439,6 @@ static void TriggerNotificationBoost(void) {
     }
 }
 
-// Khôi phục ngay độ sáng tự nhiên khi mở khóa máy, tránh kẹt màn hình đen[span_4](start_span)[span_4](end_span)
 - (void)unlockUIFromSource:(int)source withOptions:(id)options {
     gCurrentState = AODStateIdle;
     gHasActiveNotification = NO;
@@ -555,21 +447,18 @@ static void TriggerNotificationBoost(void) {
 }
 %end
 
-// CHỐNG ÁM MÀN HÌNH THEO QUỸ ĐẠO ELIP VI MÔ (0.35 px - KHÔNG BỊ PHÁT HIỆN)
+// Chống ám màn hình: Quỹ đạo vi mô vô hình
 %hook SBFLockScreenDateViewController
 - (void)updateTimeNow {
     %orig;
     if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
         gBurnInShiftStep++;
-        
-        // Tạo quỹ đạo vi mô elip 8 điểm xoay vòng
         static const CGFloat kRadiusX = 0.35f;
         static const CGFloat kRadiusY = 0.30f;
         double angle = (gBurnInShiftStep % 8) * (M_PI / 4.0);
         CGFloat dx = (CGFloat)(cos(angle) * kRadiusX);
         CGFloat dy = (CGFloat)(sin(angle) * kRadiusY);
         
-        // Chuyển động siêu mượt trong 1.2s, mắt thường không thấy độ lệch
         [UIView animateWithDuration:1.2f 
                               delay:0.0f 
                             options:UIViewAnimationOptionCurveEaseInOut | UIViewAnimationOptionAllowUserInteraction 
@@ -582,21 +471,7 @@ static void TriggerNotificationBoost(void) {
 }
 %end
 
-%hook SBNCNotificationDispatcher
-- (void)_postNotificationRequest:(id)request {
-    %orig;
-    if (gCurrentState == AODStateActive && isNotificationsEnabled()) TriggerNotificationBoost();
-}
-%end
-
-%hook NCNotificationDispatcher
-- (void)postNotificationWithRequest:(id)request {
-    %orig;
-    if (gCurrentState == AODStateActive && isNotificationsEnabled()) TriggerNotificationBoost();
-}
-%end
-
-// Điều tiết độ sáng êm ái, nhả cờ ngay khi người dùng vuốt/chạm
+// Giữ sáng mờ thay vì dập tắt khi factor <= 0.05f
 %hook SBBacklightController
 - (void)animateBacklightToFactor:(float)factor duration:(double)duration source:(long long)source completion:(id)completion {
     if (isAODMasterEnabled()) {
@@ -668,9 +543,7 @@ static void AODInjectIntoList(PSListController *list) {
     static NSString *const kAODID = @"ALWAYS_ON_DISPLAY";
     for (PSSpecifier *s in specs) {
         id specID = [s propertyForKey:@"id"];
-        if ([specID isKindOfClass:[NSString class]] && [(NSString *)specID isEqualToString:kAODID]) {
-            return;
-        }
+        if ([specID isKindOfClass:[NSString class]] && [(NSString *)specID isEqualToString:kAODID]) return;
     }
 
     Class detailClass = NSClassFromString(@"DBSAlwaysOnViewController");
@@ -709,9 +582,7 @@ static void AODInjectIntoList(PSListController *list) {
 
 %hook DBSAlwaysOnViewController
 
-- (id)isAlwaysOnEnabled:(PSSpecifier *)specifier {
-    return @(isAODMasterEnabled());
-}
+- (id)isAlwaysOnEnabled:(PSSpecifier *)specifier { return @(isAODMasterEnabled()); }
 
 - (void)setAlwaysOnDisplayEnabled:(id)value specifier:(PSSpecifier *)specifier {
     %orig(value, specifier);
@@ -727,9 +598,7 @@ static void AODInjectIntoList(PSListController *list) {
     static NSString *const kAODHzID = @"AOD_CUSTOM_HZ_KEY";
     for (PSSpecifier *s in specs) {
         id specID = [s propertyForKey:@"id"];
-        if ([specID isKindOfClass:[NSString class]] && [(NSString *)specID isEqualToString:kAODHzID]) {
-            return specs;
-        }
+        if ([specID isKindOfClass:[NSString class]] && [(NSString *)specID isEqualToString:kAODHzID]) return specs;
     }
 
     PSSpecifier *group = [%c(PSSpecifier) preferenceSpecifierNamed:@"CẤU HÌNH PHẦN CỨNG TẦNG SÂU (2-20)"
@@ -785,36 +654,16 @@ static void AODInjectIntoList(PSListController *list) {
 // 6. KHỞI TẠO & LẮNG NGHE CẢM BIẾN TIỆM CẬN
 //==============================================================
 
-static void PreferencesChangedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    AODLog(@"Nhận Darwin Notification: Đồng bộ cấu hình preferences thành công");
-}
-
 static void ProximityStateDidChange(NSNotification *notification) {
     if (gCurrentState == AODStateIdle) return;
-    
     BOOL isClose = [UIDevice currentDevice].proximityState;
-    if (isClose) {
-        gCurrentState = AODStateProximityOff;
-    } else {
-        gCurrentState = AODStateActive;
-    }
+    gCurrentState = isClose ? AODStateProximityOff : AODStateActive;
 }
 
 %ctor {
     @autoreleasepool {
         NSString *processName = [[NSProcessInfo processInfo] processName];
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
-
-        AODLog(@"Tweak nạp vào Process: %@ | Bundle: %@", processName, bundleID);
-
-        CFNotificationCenterAddObserver(
-            CFNotificationCenterGetDarwinNotifyCenter(),
-            NULL,
-            PreferencesChangedCallback,
-            CFSTR("com.jb.aodreal/preferences.changed"),
-            NULL,
-            CFNotificationSuspensionBehaviorDeliverImmediately
-        );
 
         if ([bundleID isEqualToString:@"com.apple.springboard"]) {
             %init(Group_SpringBoard);
