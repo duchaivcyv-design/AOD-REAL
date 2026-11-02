@@ -9,8 +9,7 @@
             "com.apple.BacklightServicesHost"
         );
         Executables = (
-            "backboardd",
-            "PosterBoard"
+            "backboardd"
         );
     };
 }
