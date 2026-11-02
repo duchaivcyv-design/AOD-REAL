@@ -6,34 +6,55 @@
 #import <objc/runtime.h>
 
 //==============================================================
-// 0. BỘ ĐIỀU PHỐI TRẠNG THÁI & CẤU HÌNH TWEAK
+// 0. BỘ ĐIỀU PHỐI TRẠNG THÁI & ĐỌC CÀI ĐẶT GỐC APPLE
 //==============================================================
 
 typedef NS_ENUM(NSInteger, AODState) {
-    AODStateIdle = 0,       // Màn hình sáng bình thường / Đang tương tác
-    AODStateActive,        // AOD gốc iOS đang hiển thị
-    AODStateProximityOff   // Đút túi / Úp màn hình (Dập tắt đèn nền)
+    AODStateIdle = 0,       // Màn hình sáng bình thường / Đang dùng
+    AODStateTransitioning,  // Đang chạy animation lặn dần vào AOD (0.45s)
+    AODStateActive,        // Đang hiển thị AOD tĩnh
+    AODStateProximityOff   // Đang đút túi / Úp màn hình (Tắt đèn nền về 0)
 };
 
 static AODState gCurrentState = AODStateIdle;
+static CGFloat gCurrentAODProgress = 1.0f;
 static NSInteger gBurnInShiftStep = 0;
 static id gInjectedSessionProvider = nil;
 
+// Đọc trực tiếp từ domain cài đặt AOD gốc của Apple: com.apple.BacklightServices
 static inline BOOL isAODMasterEnabled(void) {
     Boolean valid = false;
-    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.jb.aodreal"), &valid);
+    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("AlwaysOnDisplayEnabled"), CFSTR("com.apple.BacklightServices"), &valid);
+    if (!valid) {
+        val = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.apple.BacklightServices"), &valid);
+    }
+    if (!valid) {
+        val = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.jb.aodreal"), &valid);
+    }
     return valid ? (BOOL)val : YES;
 }
 
 static inline BOOL isWallpaperEnabled(void) {
     Boolean valid = false;
-    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("ShowWallpaperInAlwaysOn"), CFSTR("com.jb.aodreal"), &valid);
+    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("ShowWallpaperInAlwaysOn"), CFSTR("com.apple.BacklightServices"), &valid);
+    if (!valid) {
+        val = CFPreferencesGetAppBooleanValue(CFSTR("ShowWallpaperInAlwaysOn"), CFSTR("com.jb.aodreal"), &valid);
+    }
     return valid ? (BOOL)val : YES;
+}
+
+static inline BOOL isBlurWallpaperEnabled(void) {
+    Boolean valid = false;
+    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("BlurWallpaperInAlwaysOn"), CFSTR("com.jb.aodreal"), &valid);
+    return valid ? (BOOL)val : NO;
 }
 
 static inline BOOL isNotificationsEnabled(void) {
     Boolean valid = false;
-    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("ShowNotificationsInAlwaysOn"), CFSTR("com.jb.aodreal"), &valid);
+    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("ShowNotificationsInAlwaysOn"), CFSTR("com.apple.BacklightServices"), &valid);
+    if (!valid) {
+        val = CFPreferencesGetAppBooleanValue(CFSTR("ShowNotificationsInAlwaysOn"), CFSTR("com.jb.aodreal"), &valid);
+    }
     return valid ? (BOOL)val : YES;
 }
 
@@ -48,7 +69,9 @@ static inline float getCustomAODRefreshRate(void) {
     return 2.0f;
 }
 
-static inline float getCustomAODBrightnessFactor(void) {
+static inline float getAODPanelBrightnessFactor(void) {
+    // Độ sáng đèn nền màn hình ở mức vừa đủ để nuôi tấm nền LCD/OLED
+    // Đồng thời các thành phần chữ (đồng hồ, widget) được đẩy độ tương phản tối đa
     CFPropertyListRef val = CFPreferencesCopyAppValue(CFSTR("CustomAODBrightness"), CFSTR("com.jb.aodreal"));
     if (val && CFGetTypeID(val) == CFNumberGetTypeID()) {
         float level = [(__bridge NSNumber *)val floatValue];
@@ -56,7 +79,7 @@ static inline float getCustomAODBrightnessFactor(void) {
         if (level >= 1.0f && level <= 30.0f) return level / 1000.0f;
     }
     if (val) CFRelease(val);
-    return 0.006f; // Mức sáng tối ưu cho panel không bị dập nguồn
+    return 0.08f;
 }
 
 //==============================================================
@@ -76,6 +99,10 @@ static inline float getCustomAODBrightnessFactor(void) {
 @end
 
 @interface DBSAlwaysOnViewController : PSListController
+- (PSSpecifier *)_alwaysOnDisplaySpecifier;
+- (PSSpecifier *)_showWallpaperSpecifier;
+- (PSSpecifier *)_showNotificationsSpecifier;
+- (void)_updatesForSpecifiers:(id)arg1 isAlwaysOnEnabled:(BOOL)enabled animated:(BOOL)animated;
 - (id)isAlwaysOnEnabled:(PSSpecifier *)specifier;
 - (void)setAlwaysOnDisplayEnabled:(id)value specifier:(PSSpecifier *)specifier;
 @end
@@ -104,60 +131,6 @@ static inline float getCustomAODBrightnessFactor(void) {
 @interface BLSBacklightFBSSceneEnvironment : NSObject
 - (BOOL)supportsAlwaysOn;
 - (BOOL)isDisplayBlanked;
-- (long long)visualState;
-- (id)presentationDate;
-@end
-
-@interface BLSBacklightSceneUpdateContext : NSObject
-- (long long)visualState;
-@end
-
-@interface BLSDiagnosticPresentationDateSpecifier : NSObject
-- (id)presentationDate;
-@end
-
-@interface BLSHPresentationDateSpecifier : NSObject
-- (id)presentationDate;
-@end
-
-@interface BLSHBacklightDisplayStateMachine : NSObject
-- (void)transitionToDisplayMode:(long long)mode withDuration:(double)duration shouldWaitForCompletion:(BOOL)wait;
-@end
-
-@interface BLSHBacklightEnvironmentStateMachine : NSObject
-- (void)transitionCompleteAfterCompletingTransitionState:(id)state;
-- (void)transitionState:(id)state didBeginUpdateToBacklightState:(long long)bState visualState:(long long)vState;
-- (void)transitionState:(id)state didCompleteUpdateToBacklightState:(long long)bState visualState:(long long)vState;
-- (void)transitionState:(id)state didUpdateToDateSpecifier:(id)specifier;
-- (id)transitionStateForEnvironment:(id)env;
-- (id)withLock_transitionStateForEnvironment:(id)env;
-@end
-
-@interface BLSHBacklightFBSceneHostEnvironment : NSObject
-- (id)presentationDate;
-- (long long)visualState;
-@end
-
-@interface BLSHBacklightOSInterfaceProvider : NSObject
-- (void)transitionToDisplayMode:(long long)mode withDuration:(double)duration;
-@end
-
-@interface BLSHBaseSceneHostEnvironment : NSObject
-- (id)presentationDate;
-- (long long)visualState;
-@end
-
-@interface BLSHEnvironmentTransitionState : NSObject
-- (long long)visualStateForBacklightState:(long long)state requestedFidelity:(long long)fidelity;
-@end
-
-@interface BLSHEnvironmentTransitionStateTarget : NSObject
-- (id)presentationDate;
-- (long long)visualState;
-@end
-
-@interface BLSHLocalHostSceneEnvironment : NSObject
-- (id)presentationDate;
 - (long long)visualState;
 @end
 
@@ -215,31 +188,23 @@ static inline float getCustomAODBrightnessFactor(void) {
 - (void)powerStateDidChange:(id)arg1;
 @end
 
-@interface CSCoverSheetTransitionSettings : NSObject
-- (long long)transitionStyle;
-@end
-
-@interface CSCoverSheetView : UIView
-- (id)transitionContext;
-@end
-
 @interface CSCoverSheetViewController : UIViewController
 - (BOOL)isAlwaysOnPresentation;
 - (BOOL)shouldDimForAlwaysOn;
 - (BOOL)coverSheetIsObscured;
 - (long long)backlightLuminance;
 - (void)setBacklightLevel:(float)level;
+- (void)_updateAppearanceForAODTransitionToInactive:(BOOL)inactive;
+- (void)_updateWallpaperEffectView;
 - (NSArray *)sceneHostEnvironmentEntriesForBacklightSession;
-- (id)transitionContext;
-- (void)transitionSource:(id)source willBeginWithType:(long long)type;
-- (void)transitionSource:(id)source didUpdateTransitionWithContext:(id)context;
-- (void)transitionSource:(id)source didEndWithContext:(id)context;
 @end
 
 @interface CSCombinedListViewController : UIViewController
 - (BOOL)showNotificationsInAlwaysOn;
 - (void)setShowNotificationsInAlwaysOn:(BOOL)show;
+- (void)_setNotificationListHidden:(BOOL)hidden forReason:(id)reason;
 - (NSArray *)sceneHostEnvironmentEntriesForBacklightSession;
+- (UIView *)view;
 @end
 
 @interface CSBackgroundContentViewController : UIViewController
@@ -255,15 +220,21 @@ static inline float getCustomAODBrightnessFactor(void) {
 - (NSArray *)sceneHostEnvironmentEntriesForBacklightSession;
 @end
 
+@interface _UILegibilitySettings : NSObject
++ (instancetype)sharedInstanceForStyle:(long long)style;
+@end
+
 @interface SBFLockScreenDateView : UIView
 - (id)vibrancyConfiguration;
-- (id)legibilitySettings;
+- (_UILegibilitySettings *)legibilitySettings;
+- (void)setLegibilitySettings:(_UILegibilitySettings *)settings;
 @end
 
 @interface SBFLockScreenDateViewController : UIViewController
 - (UIView *)view;
+- (_UILegibilitySettings *)legibilitySettings;
+- (void)setLegibilitySettings:(_UILegibilitySettings *)settings;
 - (void)updateTimeNow;
-- (id)legibilitySettings;
 @end
 
 @interface SBLockScreenViewControllerBase : UIViewController
@@ -329,7 +300,6 @@ static inline float getCustomAODBrightnessFactor(void) {
 - (BOOL)isAlwaysOnActive;
 - (long long)visualState;
 - (BOOL)isClientActive;
-- (id)presentationDate;
 @end
 
 @interface BKDisplayRenderOverlay : NSObject
@@ -349,10 +319,6 @@ static inline float getCustomAODBrightnessFactor(void) {
 - (BOOL)isLowLuminance;
 @end
 
-@interface PRPosterColorHSLValues : NSObject
-- (double)luminance;
-@end
-
 @interface BLSBacklight : NSObject
 + (BOOL)isAlwaysOnEnabledByHardware;
 @end
@@ -365,13 +331,26 @@ static inline float getCustomAODBrightnessFactor(void) {
 + (BOOL)isAlwaysOnDisplaySupported;
 @end
 
+@interface CBController : NSObject
+- (void)setPowerState:(BOOL)state completion:(id)completion;
+@end
+
 //==============================================================
-// 2. TẦNG BACKBOARDD & ĐIỀU PHỐI BACKLIGHTHOST (ĐỒNG BỘ NATIVE)
+// 2. TẦNG DRIVER & PHẦN CỨNG (BACKBOARDD)
 //==============================================================
 
 %group Group_Backboardd
 
-// Giữ panel hiển thị luôn được cấp nguồn, an toàn không can thiệp CBController
+%hook CBController
+- (void)setPowerState:(BOOL)state completion:(id)completion {
+    if (isAODMasterEnabled() && !state && gCurrentState != AODStateProximityOff) {
+        %orig(YES, completion); // Bảo toàn nguồn đèn nền panel
+        return;
+    }
+    %orig(state, completion);
+}
+%end
+
 %hook CAWindowServerDisplay
 - (BOOL)blankingRemovesPower {
     if (isAODMasterEnabled() && gCurrentState != AODStateProximityOff) {
@@ -389,14 +368,14 @@ static inline float getCustomAODBrightnessFactor(void) {
 }
 
 - (BOOL)disabled {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && gCurrentState != AODStateProximityOff && gCurrentState != AODStateIdle) {
         return NO;
     }
     return %orig;
 }
 
 - (void)setDisabled:(BOOL)val {
-    if (isAODMasterEnabled() && val && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && val && gCurrentState != AODStateProximityOff) {
         %orig(NO);
         return;
     }
@@ -404,14 +383,14 @@ static inline float getCustomAODBrightnessFactor(void) {
 }
 
 - (BOOL)isBlanked {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && gCurrentState != AODStateProximityOff && gCurrentState != AODStateIdle) {
         return NO;
     }
     return %orig;
 }
 
 - (void)setBlanked:(BOOL)blanked {
-    if (isAODMasterEnabled() && blanked && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && blanked && gCurrentState != AODStateProximityOff) {
         %orig(NO);
         return;
     }
@@ -419,14 +398,14 @@ static inline float getCustomAODBrightnessFactor(void) {
 }
 
 - (BOOL)disablesUpdates {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
         return NO;
     }
     return %orig;
 }
 
 - (void)setDisablesUpdates:(BOOL)val {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
         %orig(NO);
         return;
     }
@@ -434,7 +413,7 @@ static inline float getCustomAODBrightnessFactor(void) {
 }
 
 - (BOOL)isFlipBookActive {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && gCurrentState != AODStateIdle && gCurrentState != AODStateProximityOff) {
         return YES;
     }
     return %orig;
@@ -459,7 +438,7 @@ static inline float getCustomAODBrightnessFactor(void) {
 }
 
 - (void)powerStateDidChange:(id)arg1 {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && gCurrentState != AODStateIdle && gCurrentState != AODStateProximityOff) {
         return;
     }
     %orig(arg1);
@@ -472,81 +451,14 @@ static inline float getCustomAODBrightnessFactor(void) {
 
 %hook BKDisplayManager
 - (void)setBlanked:(BOOL)blanked withReason:(id)reason {
-    if (isAODMasterEnabled() && blanked && gCurrentState != AODStateProximityOff) {
-        %orig(NO, reason);
-        return;
+    if (isAODMasterEnabled() && blanked) {
+        if (gCurrentState != AODStateProximityOff) {
+            %orig(NO, reason);
+            return;
+        }
     }
     %orig(blanked, reason);
 }
-%end
-
-// [BLSHBacklightDisplayStateMachine]
-// Triệt tiêu delay khi chuyển chế độ hiển thị phần cứng sang AOD: Bỏ chờ completion
-%hook BLSHBacklightDisplayStateMachine
-- (void)transitionToDisplayMode:(long long)mode withDuration:(double)duration shouldWaitForCompletion:(BOOL)wait {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        if (mode != 1) { // Chuyển sang AOD mode: Không chờ đợi gây lệch pha
-            wait = NO;
-        }
-    }
-    %orig(mode, duration, wait);
-}
-%end
-
-// [BLSHBacklightOSInterfaceProvider]
-%hook BLSHBacklightOSInterfaceProvider
-- (void)transitionToDisplayMode:(long long)mode withDuration:(double)duration {
-    %orig(mode, duration);
-}
-%end
-
-// [BLSHBacklightEnvironmentStateMachine]
-// Bộ điều phối hoàn tất transition giữa PosterBoard và SpringBoard đồng thời
-%hook BLSHBacklightEnvironmentStateMachine
-- (void)transitionCompleteAfterCompletingTransitionState:(id)state {
-    %orig(state);
-}
-
-- (void)transitionState:(id)state didBeginUpdateToBacklightState:(long long)bState visualState:(long long)vState {
-    %orig(state, bState, vState);
-}
-
-- (void)transitionState:(id)state didCompleteUpdateToBacklightState:(long long)bState visualState:(long long)vState {
-    %orig(state, bState, vState);
-}
-
-- (void)transitionState:(id)state didUpdateToDateSpecifier:(id)specifier {
-    %orig(state, specifier);
-}
-
-- (id)transitionStateForEnvironment:(id)env {
-    return %orig(env);
-}
-
-- (id)withLock_transitionStateForEnvironment:(id)env {
-    return %orig(env);
-}
-%end
-
-// [BLSHEnvironmentTransitionState]
-%hook BLSHEnvironmentTransitionState
-- (long long)visualStateForBacklightState:(long long)state requestedFidelity:(long long)fidelity {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        return 2; // VisualState = 2 (AOD Active)
-    }
-    return %orig(state, fidelity);
-}
-%end
-
-// [BLSHEnvironmentTransitionStateTarget]
-%hook BLSHEnvironmentTransitionStateTarget
-- (long long)visualState {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        return 2;
-    }
-    return %orig;
-}
-- (id)presentationDate { return %orig; }
 %end
 
 %hook BLSHBacklightStateMachine
@@ -624,7 +536,6 @@ static inline float getCustomAODBrightnessFactor(void) {
 }
 %end
 
-// [BLSHBacklightSceneHostEnvironment]
 %hook BLSHBacklightSceneHostEnvironment
 - (BOOL)supportsAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
 - (BOOL)isAlwaysOnActive { return (isAODMasterEnabled() && gCurrentState != AODStateProximityOff) ? YES : %orig; }
@@ -634,117 +545,82 @@ static inline float getCustomAODBrightnessFactor(void) {
     if (isAODMasterEnabled() && state == 0 && gCurrentState != AODStateProximityOff) return 2;
     return state;
 }
-- (id)presentationDate { return %orig; }
-%end
-
-// [BLSHBacklightFBSceneHostEnvironment]
-%hook BLSHBacklightFBSceneHostEnvironment
-- (long long)visualState {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) return 2;
-    return %orig;
-}
-- (id)presentationDate { return %orig; }
-%end
-
-// [BLSHBaseSceneHostEnvironment]
-%hook BLSHBaseSceneHostEnvironment
-- (long long)visualState {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) return 2;
-    return %orig;
-}
-- (id)presentationDate { return %orig; }
-%end
-
-// [BLSHLocalHostSceneEnvironment]
-%hook BLSHLocalHostSceneEnvironment
-- (long long)visualState {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) return 2;
-    return %orig;
-}
-- (id)presentationDate { return %orig; }
-%end
-
-// [BLSBacklightSceneUpdateContext]
-%hook BLSBacklightSceneUpdateContext
-- (long long)visualState {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) return 2;
-    return %orig;
-}
-%end
-
-// [BLSBacklightFBSSceneEnvironment]
-%hook BLSBacklightFBSSceneEnvironment
-- (BOOL)supportsAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
-- (BOOL)isDisplayBlanked {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) return NO;
-    return %orig;
-}
-- (long long)visualState {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) return 2;
-    return %orig;
-}
-- (id)presentationDate { return %orig; }
-%end
-
-// [BLSHPresentationDateSpecifier] & [BLSDiagnosticPresentationDateSpecifier]
-%hook BLSHPresentationDateSpecifier
-- (id)presentationDate { return %orig; }
-%end
-
-%hook BLSDiagnosticPresentationDateSpecifier
-- (id)presentationDate { return %orig; }
 %end
 
 %end // Group_Backboardd
 
 //==============================================================
-// 3. TẦNG SPRINGBOARD: KÍCH HOẠT AOD NATIVE (KHÔNG DÙNG ANIMATION TỰ CHẾ)
+// 3. TẦNG SPRINGBOARD: KHOÁ ĐỘ TƯƠNG PHẢN ĐỒNG HỒ & CÔNG TẮC GỐC
 //==============================================================
 
 %group Group_SpringBoard
 
+static CSCoverSheetViewController *gCoverSheetVC = nil;
+static CSCombinedListViewController *gCombinedListVC = nil;
 static id gCachedFlipbookSpec = nil;
 
-// [CSCoverSheetTransitionSettings transitionStyle]
-%hook CSCoverSheetTransitionSettings
-- (long long)transitionStyle { return %orig; }
-%end
-
-// [CSCoverSheetView transitionContext]
-%hook CSCoverSheetView
-- (id)transitionContext { return %orig; }
-%end
-
 %hook CSCoverSheetViewController
+- (void)viewDidLoad {
+    %orig;
+    gCoverSheetVC = self;
+}
+
 - (BOOL)isAlwaysOnPresentation { 
-    return (isAODMasterEnabled() && gCurrentState == AODStateActive) ? YES : %orig; 
+    return (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) ? YES : %orig; 
 }
 
 - (BOOL)shouldDimForAlwaysOn { 
-    return (isAODMasterEnabled() && gCurrentState == AODStateActive) ? YES : %orig; 
+    return (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) ? YES : %orig; 
 }
 
 - (BOOL)coverSheetIsObscured {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) return NO;
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) return NO;
     return %orig;
 }
 
 - (long long)backlightLuminance {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) return 1;
+    if (isAODMasterEnabled()) {
+        if (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning) return 1;
+    }
     return %orig;
 }
 
-- (void)setBacklightLevel:(float)level {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        %orig(getCustomAODBrightnessFactor() * 100.0f);
-        return;
+// CÔNG TẮC GỐC SHOW WALLPAPER: Gạt tắt là ĐEN TUYỀN 100%
+- (void)_updateWallpaperEffectView {
+    %orig;
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+        UIView *floatingLayer = nil;
+        UIView *effectView = nil;
+        @try {
+            floatingLayer = [self valueForKey:@"_wallpaperFloatingLayerContainerView"];
+            effectView = [self valueForKey:@"_wallpaperEffectView"];
+        } @catch (NSException *e) {}
+        
+        if (!isWallpaperEnabled()) {
+            // TẮT HÌNH NỀN: Nền đen tuyệt đối, triệt tiêu toàn bộ ảnh
+            if (floatingLayer) floatingLayer.alpha = 0.0f;
+            if (effectView) {
+                effectView.backgroundColor = [UIColor blackColor];
+                effectView.alpha = 1.0f;
+            }
+            self.view.backgroundColor = [UIColor blackColor];
+        } else {
+            // HIỆN HÌNH NỀN: Làm tối mượt mà (dim)
+            if (floatingLayer) floatingLayer.alpha = 1.0f;
+            if (effectView) {
+                if (isBlurWallpaperEnabled()) {
+                    effectView.alpha = 0.85f; // Làm mờ hình nền
+                } else {
+                    effectView.alpha = 0.0f; // Nền trong tự nhiên
+                }
+            }
+        }
     }
-    %orig(level);
 }
 
 - (NSArray *)sceneHostEnvironmentEntriesForBacklightSession {
     NSArray *entries = %orig;
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
         if (!entries || entries.count == 0) {
             @try {
                 id sceneHost = [self valueForKey:@"_sceneHostEnvironment"];
@@ -755,22 +631,21 @@ static id gCachedFlipbookSpec = nil;
     return entries;
 }
 
-// Giữ nguyên luồng TransitionContext chuẩn của CoverSheet
-- (id)transitionContext { return %orig; }
-- (void)transitionSource:(id)source willBeginWithType:(long long)type { %orig(source, type); }
-- (void)transitionSource:(id)source didUpdateTransitionWithContext:(id)context { %orig(source, context); }
-- (void)transitionSource:(id)source didEndWithContext:(id)context { %orig(source, context); }
-
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
-    if (gCurrentState == AODStateActive) {
+    if (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning) {
         gCurrentState = AODStateIdle;
     }
 }
 %end
 
-// Quản lý hiển thị thông báo theo chuẩn Apple (Không gọi setHidden bừa bãi)
+// CÔNG TẮC GỐC SHOW NOTIFICATIONS: Gạt tắt là ẨN SẠCH THÔNG BÁO
 %hook CSCombinedListViewController
+- (void)viewDidLoad {
+    %orig;
+    gCombinedListVC = self;
+}
+
 - (BOOL)showNotificationsInAlwaysOn {
     if (isAODMasterEnabled()) {
         return isNotificationsEnabled();
@@ -785,13 +660,26 @@ static id gCachedFlipbookSpec = nil;
     %orig(show);
 }
 
+- (void)_setNotificationListHidden:(BOOL)hidden forReason:(id)reason {
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+        if (!isNotificationsEnabled()) {
+            %orig(YES, @"AODPreferencesSuppression");
+            self.view.alpha = 0.0f;
+            return;
+        }
+    }
+    %orig(hidden, reason);
+    if (isNotificationsEnabled()) {
+        self.view.alpha = 1.0f;
+    }
+}
+
 - (NSArray *)sceneHostEnvironmentEntriesForBacklightSession {
     if (isAODMasterEnabled() && !isNotificationsEnabled()) return @[];
     return %orig;
 }
 %end
 
-// Quản lý hiển thị hình nền theo chuẩn Apple (Không phủ layer blur nhân tạo)
 %hook CSBackgroundContentViewController
 - (NSArray *)sceneHostEnvironmentEntriesForBacklightSession {
     if (isAODMasterEnabled() && !isWallpaperEnabled()) return @[];
@@ -799,13 +687,15 @@ static id gCachedFlipbookSpec = nil;
 }
 %end
 
-// [CSComplicationContainerViewController] - Đồng bộ độ sáng / vibrancy của Widget
 %hook CSComplicationContainerViewController
-- (NSArray *)sceneHostEnvironmentEntriesForBacklightSession { return %orig; }
+- (NSArray *)sceneHostEnvironmentEntriesForBacklightSession {
+    return %orig;
+}
 
 - (id)vibrancyConfiguration {
     id orig = %orig;
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+        // Giữ Widget sáng rõ, không bị mờ đục
         if (orig && [orig respondsToSelector:@selector(copyWithLuminanceReduced:)]) {
             return [orig performSelector:@selector(copyWithLuminanceReduced:) withObject:@(NO)];
         }
@@ -815,14 +705,17 @@ static id gCachedFlipbookSpec = nil;
 %end
 
 %hook CSActivityItemViewController
-- (NSArray *)sceneHostEnvironmentEntriesForBacklightSession { return %orig; }
+- (NSArray *)sceneHostEnvironmentEntriesForBacklightSession {
+    return %orig;
+}
 %end
 
-// [SBFLockScreenDateView] - Giữ độ nét đồng hồ & chống nhạt màu legibility
+// ĐỒNG HỒ & WIDGET SÁNG RỰC RỠ: Không bị dìm tối theo hình nền
 %hook SBFLockScreenDateView
 - (id)vibrancyConfiguration {
     id orig = %orig;
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+        // Cưỡng chế giữ độ tương phản cao và độ chói tối đa cho số đồng hồ & ngày tháng
         if (orig && [orig respondsToSelector:@selector(copyWithLuminanceReduced:)]) {
             return [orig performSelector:@selector(copyWithLuminanceReduced:) withObject:@(NO)];
         }
@@ -830,18 +723,29 @@ static id gCachedFlipbookSpec = nil;
     return orig;
 }
 
-- (id)legibilitySettings { return %orig; }
+- (_UILegibilitySettings *)legibilitySettings {
+    _UILegibilitySettings *orig = %orig;
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+        // Trả về Legibility phong cách sáng trắng tương phản cao (High Contrast White)
+        return [%c(_UILegibilitySettings) sharedInstanceForStyle:1];
+    }
+    return orig;
+}
 %end
 
-// [SBFLockScreenDateViewController] - Giữ legibility settings đồng bộ
 %hook SBFLockScreenDateViewController
-- (id)legibilitySettings { return %orig; }
+- (_UILegibilitySettings *)legibilitySettings {
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+        return [%c(_UILegibilitySettings) sharedInstanceForStyle:1];
+    }
+    return %orig;
+}
 %end
 
 %hook SBLockScreenViewControllerBase
 - (void)setBacklightLevel:(float)level {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        %orig(getCustomAODBrightnessFactor() * 100.0f);
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+        %orig(getAODPanelBrightnessFactor() * 100.0f);
         return;
     }
     %orig(level);
@@ -850,8 +754,8 @@ static id gCachedFlipbookSpec = nil;
 
 %hook SBDashBoardLockScreenEnvironment
 - (void)setBacklightLevel:(float)level {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        %orig(getCustomAODBrightnessFactor() * 100.0f);
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+        %orig(getAODPanelBrightnessFactor() * 100.0f);
         return;
     }
     %orig(level);
@@ -860,48 +764,84 @@ static id gCachedFlipbookSpec = nil;
 
 %hook UIApplication
 - (void)setBacklightLevel:(float)level {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        %orig(getCustomAODBrightnessFactor() * 100.0f);
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+        %orig(getAODPanelBrightnessFactor() * 100.0f);
         return;
     }
     %orig(level);
 }
 %end
 
-// ĐIỀU PHỐI CHUYỂN TRẠNG THÁI SANG AOD NATIVE
-// Không tự nhồi UIView animate - Để iOS tự chạy curve mờ gốc, dẹp bỏ xung đột 2 animation
+// ĐIỀU PHỐI ĐỘ SÁNG THỰC TẾ & CHUYỂN CẢNH MƯỢT MÀ
 %hook SBBacklightController
 - (void)setBacklightState:(long long)state source:(long long)source animated:(BOOL)animated completion:(id)completion {
     if (isAODMasterEnabled() && state == 0) {
         if (gCurrentState != AODStateProximityOff) {
-            gCurrentState = AODStateActive;
-            state = 2; // Giữ State AOD chuẩn gốc của Apple
+            gCurrentState = AODStateTransitioning;
+            
+            if (gCoverSheetVC && [gCoverSheetVC respondsToSelector:@selector(_updateAppearanceForAODTransitionToInactive:)]) {
+                [gCoverSheetVC _updateAppearanceForAODTransitionToInactive:YES];
+            }
+            
+            if (gCombinedListVC) {
+                [gCombinedListVC _setNotificationListHidden:!isNotificationsEnabled() forReason:@"AODTransition"];
+            }
+            
+            [UIView animateWithDuration:0.45f delay:0.0f options:UIViewAnimationOptionCurveEaseInOut animations:^{
+                gCurrentAODProgress = 0.0f;
+                if (gCoverSheetVC) [gCoverSheetVC _updateWallpaperEffectView];
+            } completion:^(BOOL finished) {
+                gCurrentState = AODStateActive;
+            }];
+            
+            state = 2; // Giữ State AOD
         }
     } else if (state != 0 && state != 2) {
         gCurrentState = AODStateIdle;
+        gCurrentAODProgress = 1.0f;
+        if (gCoverSheetVC && [gCoverSheetVC respondsToSelector:@selector(_updateAppearanceForAODTransitionToInactive:)]) {
+            [gCoverSheetVC _updateAppearanceForAODTransitionToInactive:NO];
+        }
+        if (gCombinedListVC) {
+            [gCombinedListVC _setNotificationListHidden:NO forReason:@"AODWake"];
+        }
     }
-    %orig(state, source, animated, completion);
+    %orig(state, source, YES, completion);
 }
 
 - (float)_factorToPublishForBacklightState:(long long)state {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        return getCustomAODBrightnessFactor();
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+        return getAODPanelBrightnessFactor(); // Đảm bảo mức sáng đủ nuôi đồng hồ
     }
     return %orig(state);
 }
 
 - (void)animateBacklightToFactor:(float)factor duration:(double)duration source:(long long)source completion:(id)completion {
     if (isAODMasterEnabled()) {
-        if (gCurrentState == AODStateActive) {
+        if (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning) {
             if (factor <= 0.05f) {
-                factor = getCustomAODBrightnessFactor();
+                factor = getAODPanelBrightnessFactor();
             }
         }
-        if (factor > 0.1f) {
+        if (factor > 0.15f) {
             gCurrentState = AODStateIdle;
         }
     }
     %orig(factor, duration, source, completion);
+}
+%end
+
+%hook BLSBacklightFBSSceneEnvironment
+- (BOOL)supportsAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
+
+- (BOOL)isDisplayBlanked {
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) return NO;
+    return %orig;
+}
+
+- (long long)visualState {
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) return 2;
+    return %orig;
 }
 %end
 
@@ -1049,14 +989,14 @@ static id gCachedFlipbookSpec = nil;
 - (BOOL)shouldTapToWake { return isAODMasterEnabled() ? YES : %orig; }
 
 - (void)tapToWakeDidRecognize:(id)arg1 {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
         [[%c(SBLockScreenManager) sharedInstance] _wakeScreenForTapToWake];
     }
     %orig(arg1);
 }
 %end
 
-// CẢM BIẾN TIỆM CẬN: Đút túi/úp mặt thì dập tắt hẳn đèn, bỏ ra thì AOD tự sáng
+// CẢM BIẾN TIỆM CẬN: Đút túi/úp mặt thì dập tắt hẳn (0.0), nhấc ra thì tự bật lại
 %hook SBProximitySensorManager
 - (void)_setObjectInProximity:(BOOL)inProximity detectionMode:(int)mode {
     %orig(inProximity, mode);
@@ -1094,62 +1034,41 @@ static id gCachedFlipbookSpec = nil;
 %end // Group_SpringBoard
 
 //==============================================================
-// 4. TẦNG POSTERBOARD: ĐỒNG BỘ NATIVE LÀM MỜ HÌNH NỀN GỐC
+// 4. TẦNG POSTERBOARD: LÀM TỐI HÌNH NỀN ĐỘC LẬP
 //==============================================================
 
 %group Group_PosterBoard
 
-// [PRPosterEnvironmentImpl]
-// Cho phép hình nền tự hạ luminance & backlight theo đường cong gốc của iOS
 %hook PRPosterEnvironmentImpl
 - (CGFloat)backlightProgress {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        return 0.0f;
+    if (isAODMasterEnabled()) {
+        if (!isWallpaperEnabled()) return 0.0f; // Tắt hình nền
+        if (gCurrentState == AODStateActive) return 0.0f;
+        if (gCurrentState == AODStateTransitioning) return gCurrentAODProgress;
     }
     return %orig;
 }
 
 - (CGFloat)linearBacklightProgress {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        return 0.0f;
+    if (isAODMasterEnabled()) {
+        if (!isWallpaperEnabled()) return 0.0f;
+        if (gCurrentState == AODStateActive) return 0.0f;
+        if (gCurrentState == AODStateTransitioning) return gCurrentAODProgress;
     }
     return %orig;
 }
 
-- (void)setBacklightProgress:(CGFloat)progress {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        %orig(0.0f);
-        return;
-    }
-    %orig(progress);
-}
-
-- (void)setLinearBacklightProgress:(CGFloat)progress {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        %orig(0.0f);
-        return;
-    }
-    %orig(progress);
-}
-
 - (long long)luminance {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
         return 1;
     }
     return %orig;
 }
 
 - (BOOL)isLowLuminance {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
         return YES;
     }
-    return %orig;
-}
-%end
-
-// [PRPosterColorHSLValues luminance]
-%hook PRPosterColorHSLValues
-- (double)luminance {
     return %orig;
 }
 %end
@@ -1157,7 +1076,7 @@ static id gCachedFlipbookSpec = nil;
 %end // Group_PosterBoard
 
 //==============================================================
-// 5. TẦNG PREFERENCES: GIAO DIỆN CÀI ĐẶT CHUẨN SETTINGS (APPLE AOD)
+// 5. TẦNG PREFERENCES: MỞ ẨN BỘ 3 CÔNG TẮC GỐC APPLE 100%
 //==============================================================
 
 %group Group_Preferences
@@ -1224,13 +1143,17 @@ static void AODInjectIntoList(PSListController *list) {
 }
 %end
 
+// MỞ TRỌN VẸN CÔNG TẮC GỐC CỦA APPLE KÈM SLIDER TẦNG SÂU
 %hook DBSAlwaysOnViewController
 
 - (id)isAlwaysOnEnabled:(PSSpecifier *)specifier { return @(isAODMasterEnabled()); }
 
 - (void)setAlwaysOnDisplayEnabled:(id)value specifier:(PSSpecifier *)specifier {
     %orig(value, specifier);
+    CFPreferencesSetAppValue(CFSTR("AlwaysOnDisplayEnabled"), (__bridge CFPropertyListRef)(value), CFSTR("com.apple.BacklightServices"));
+    CFPreferencesSetAppValue(CFSTR("enabled"), (__bridge CFPropertyListRef)(value), CFSTR("com.apple.BacklightServices"));
     CFPreferencesSetAppValue(CFSTR("enabled"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
+    CFPreferencesAppSynchronize(CFSTR("com.apple.BacklightServices"));
     CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
 }
@@ -1239,8 +1162,68 @@ static void AODInjectIntoList(PSListController *list) {
     NSMutableArray *specs = %orig;
     if (!specs) specs = [NSMutableArray array];
 
+    BOOL hasAOD = NO;
+    BOOL hasWallpaper = NO;
+    BOOL hasNotifications = NO;
+
+    for (PSSpecifier *s in specs) {
+        SEL getter = (SEL)[[s propertyForKey:@"getter"] pointerValue];
+        NSString *getterStr = NSStringFromSelector(getter);
+        if ([getterStr containsString:@"isAlwaysOnEnabled"] || [[s propertyForKey:@"id"] isEqualToString:@"ALWAYS_ON_DISPLAY_ENABLED"]) {
+            hasAOD = YES;
+        }
+        if ([getterStr containsString:@"ShowWallpaper"] || [[s propertyForKey:@"id"] isEqualToString:@"SHOW_WALLPAPER"]) {
+            hasWallpaper = YES;
+        }
+        if ([getterStr containsString:@"ShowNotifications"] || [[s propertyForKey:@"id"] isEqualToString:@"SHOW_NOTIFICATIONS"]) {
+            hasNotifications = YES;
+        }
+    }
+
+    // Nếu Apple ẩn do thiết bị không có LTPO, gọi trực tiếp bộ specifier gốc nội bộ của Apple
+    if (!hasAOD && [self respondsToSelector:@selector(_alwaysOnDisplaySpecifier)]) {
+        PSSpecifier *s = [self _alwaysOnDisplaySpecifier];
+        if (s) [specs addObject:s];
+    }
+    if (!hasWallpaper && [self respondsToSelector:@selector(_showWallpaperSpecifier)]) {
+        PSSpecifier *s = [self _showWallpaperSpecifier];
+        if (s) [specs addObject:s];
+    }
+    if (!hasNotifications && [self respondsToSelector:@selector(_showNotificationsSpecifier)]) {
+        PSSpecifier *s = [self _showNotificationsSpecifier];
+        if (s) [specs addObject:s];
+    }
+
+    static NSString *const kAODBlurID = @"AOD_BLUR_WALLPAPER_KEY";
     static NSString *const kAODHzID = @"AOD_CUSTOM_HZ_KEY";
     
+    BOOL hasBlur = NO;
+    for (PSSpecifier *s in specs) {
+        id specID = [s propertyForKey:@"id"];
+        if ([specID isKindOfClass:[NSString class]] && [(NSString *)specID isEqualToString:kAODBlurID]) {
+            hasBlur = YES;
+            break;
+        }
+    }
+
+    if (!hasBlur) {
+        PSSpecifier *blurSwitch = [%c(PSSpecifier) preferenceSpecifierNamed:@"Làm mờ ảnh nền (Blur Wallpaper)"
+                                                                    target:self set:@selector(setBlurWallpaper:spec:) get:@selector(getBlurWallpaper:) detail:Nil cell:6 edit:Nil];
+        [blurSwitch setProperty:kAODBlurID forKey:@"id"];
+
+        NSInteger idx = -1;
+        for (NSInteger i = 0; i < (NSInteger)specs.count; i++) {
+            NSString *sid = [[[specs objectAtIndex:i] propertyForKey:@"id"] description].uppercaseString;
+            if ([sid containsString:@"WALLPAPER"]) { idx = i + 1; break; }
+        }
+        
+        if (idx >= 0 && idx <= (NSInteger)specs.count) {
+            [specs insertObject:blurSwitch atIndex:idx];
+        } else {
+            [specs addObject:blurSwitch];
+        }
+    }
+
     BOOL hasHz = NO;
     for (PSSpecifier *s in specs) {
         id specID = [s propertyForKey:@"id"];
@@ -1278,6 +1261,16 @@ static void AODInjectIntoList(PSListController *list) {
 }
 
 %new
+- (void)setBlurWallpaper:(id)value spec:(PSSpecifier *)spec {
+    CFPreferencesSetAppValue(CFSTR("BlurWallpaperInAlwaysOn"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
+    CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
+}
+
+%new
+- (id)getBlurWallpaper:(PSSpecifier *)spec { return @(isBlurWallpaperEnabled()); }
+
+%new
 - (void)setCustomHz:(id)value spec:(PSSpecifier *)spec {
     CFPreferencesSetAppValue(CFSTR("CustomAODRefreshRate"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
     CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
@@ -1295,7 +1288,7 @@ static void AODInjectIntoList(PSListController *list) {
 }
 
 %new
-- (id)getCustomBrightness:(PSSpecifier *)spec { return @(getCustomAODBrightnessFactor() * 1000.0f); }
+- (id)getCustomBrightness:(PSSpecifier *)spec { return @(getAODPanelBrightnessFactor() * 1000.0f); }
 
 %end
 
