@@ -3,6 +3,8 @@
 #import <QuartzCore/QuartzCore.h>
 #import <QuartzCore/CAFrameRateRange.h>
 #import <IOKit/IOKitLib.h>
+#import <IOKit/ps/IOPowerSources.h>
+#import <IOKit/ps/IOPSKeys.h>
 #import <objc/runtime.h>
 #import <spawn.h>
 
@@ -90,19 +92,50 @@ static inline float getCustomAODRefreshRate(void) { return gCachedCustomHz; }
 static inline float getAODPanelBrightnessFactor(void) { return gCachedBrightnessFactor; }
 static inline float getCustomAODBrightnessFactor(void) { return gCachedBrightnessFactor; }
 
-// ĐẶT TẠI ĐÂY: Để Group_Backboardd, Group_SpringBoard và các Group phía dưới đều thấy hàm
+// CHÍNH SÁCH NGẮT AOD TỰ ĐỘNG CHUẨN GỐC APPLE (KHÔNG GÂY DEADLOCK/SIGTRAP TRÊN SPRINGBOARD)
 static inline BOOL shouldSuppressAODBySystemPolicies(void) {
-    UIDevice *device = [UIDevice currentDevice];
-    [device setBatteryMonitoringEnabled:YES];
-    if (device.batteryState != UIDeviceBatteryStateCharging && 
-        device.batteryState != UIDeviceBatteryStateFull) {
-        if (device.batteryLevel > 0.0f && device.batteryLevel <= 0.05f) {
-            return YES;
-        }
-    }
-
+    // 1. Chế độ nguồn điện thấp (Tiết kiệm pin)
     if ([[NSProcessInfo processInfo] isLowPowerModeEnabled]) {
         return YES;
+    }
+
+    // 2. Đọc mức pin trực tiếp từ kernel IOKit (Tránh gọi UIDevice làm trigger batteryStatusDidChange)
+    CFTypeRef powerInfo = IOPSCopyPowerSourcesInfo();
+    if (powerInfo) {
+        CFArrayRef powerSourcesList = IOPSCopyPowerSourcesList(powerInfo);
+        if (powerSourcesList) {
+            CFIndex count = CFArrayGetCount(powerSourcesList);
+            for (CFIndex i = 0; i < count; ++i) {
+                CFDictionaryRef desc = IOPSGetPowerSourceDescription(powerInfo, CFArrayGetValueAtIndex(powerSourcesList, i));
+                if (desc) {
+                    CFStringRef state = (CFStringRef)CFDictionaryGetValue(desc, CFSTR(kIOPSPowerSourceStateKey));
+                    // Đang cắm sạc thì không tự ngắt AOD
+                    if (state && CFStringCompare(state, CFSTR(kIOPSACPowerValue), 0) == kCFCompareEqualTo) {
+                        CFRelease(powerSourcesList);
+                        CFRelease(powerInfo);
+                        return NO;
+                    }
+
+                    CFNumberRef curCapNum = (CFNumberRef)CFDictionaryGetValue(desc, CFSTR(kIOPSCurrentCapacityKey));
+                    CFNumberRef maxCapNum = (CFNumberRef)CFDictionaryGetValue(desc, CFSTR(kIOPSMaxCapacityKey));
+                    if (curCapNum && maxCapNum) {
+                        int cur = 0, max = 100;
+                        CFNumberGetValue(curCapNum, kCFNumberIntType, &cur);
+                        CFNumberGetValue(maxCapNum, kCFNumberIntType, &max);
+                        if (max > 0) {
+                            int percent = (cur * 100) / max;
+                            if (percent <= 5) { // Pin <= 5% -> Tự ngắt AOD
+                                CFRelease(powerSourcesList);
+                                CFRelease(powerInfo);
+                                return YES;
+                            }
+                        }
+                    }
+                }
+            }
+            CFRelease(powerSourcesList);
+        }
+        CFRelease(powerInfo);
     }
 
     return NO;
