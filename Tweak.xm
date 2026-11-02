@@ -551,81 +551,77 @@ static void TriggerNotificationBoost(void) {
 %end // Group_PosterBoard
 
 //==============================================================
-// 5. TẦNG 5: GIAO DIỆN CÀI ĐẶT (PREFERENCES GỐC & THANH TRƯỢT TÙY CHỈNH)
+// 5. TẦNG 5: GIAO DIỆN CÀI ĐẶT (HOOK TRỰC TIẾP PSLISTCONTROLLER)
 //==============================================================
 
 %group Group_Preferences
 
 %hook BLSBacklight
-
-+ (BOOL)isAlwaysOnEnabledByHardware {
-    return YES;
-}
-
++ (BOOL)isAlwaysOnEnabledByHardware { return YES; }
 %end
 
 %hook BLSAlwaysOnFrequencyConfiguration
-
-- (BOOL)isAlwaysOnEnabled {
-    return YES;
-}
-
+- (BOOL)isAlwaysOnEnabled { return YES; }
 %end
 
 %hook CBDisplayModule
-
-- (BOOL)isAlwaysOnDisplaySupported {
-    return YES;
-}
-
+- (BOOL)isAlwaysOnDisplaySupported { return YES; }
 %end
 
-// Ép hiển thị mục AOD vĩnh viễn trong Cài đặt -> Màn hình & Độ sáng
+// Ép cờ kiểm tra phần cứng của Display & Brightness
 %hook DBRDisplayController
+- (BOOL)shouldShowAlwaysOnDisplay { return YES; }
+- (BOOL)shouldShowAlwaysOnDisplaySpecifier { return YES; }
+- (BOOL)isAlwaysOnDisplaySupported { return YES; }
+%end
 
-- (BOOL)shouldShowAlwaysOnDisplay {
-    return YES;
-}
+// Hook thẳng lớp gốc dựng specifier của trang Màn hình & Độ sáng
+%hook PSListController
 
-- (BOOL)shouldShowAlwaysOnDisplaySpecifier {
-    return YES;
-}
-
-- (BOOL)isAlwaysOnDisplaySupported {
-    return YES;
-}
-
-- (id)specifiers {
+- (NSMutableArray *)specifiers {
     NSMutableArray *specs = %orig;
+    if (!specs) return specs;
 
-    static NSString *const kAODID = @"ALWAYS_ON_DISPLAY";
-    BOOL exists = NO;
-    for (PSSpecifier *s in specs) {
-        if ([[s propertyForKey:@"id"] isEqualToString:kAODID]) {
-            exists = YES;
-            break;
+    // Kiểm tra nếu Controller đang render là trang Màn hình & Độ sáng
+    NSString *className = NSStringFromClass([self class]);
+    if ([className containsString:@"Display"] || [className containsString:@"DBR"]) {
+        static NSString *const kAODID = @"ALWAYS_ON_DISPLAY";
+        
+        for (PSSpecifier *s in specs) {
+            if ([[s propertyForKey:@"id"] isEqualToString:kAODID]) {
+                return specs;
+            }
         }
-    }
 
-    if (!exists) {
-        Class detailClass = NSClassFromString(@"DBRAlwaysOnDisplayDetailController") ?: NSClassFromString(@"DBRAlwaysOnDisplayController");
+        // Tạo specifier liên kết đến trang cấu hình AOD
+        Class detailClass = NSClassFromString(@"DBRAlwaysOnDisplayDetailController") 
+                         ?: NSClassFromString(@"DBRAlwaysOnDisplayController")
+                         ?: NSClassFromString(@"AODREALRootListController");
+
         PSSpecifier *aodSpec = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình luôn bật"
                                                                   target:self
                                                                      set:NULL
                                                                      get:NULL
                                                                   detail:detailClass
-                                                                    cell:2
+                                                                    cell:2 // PSLinkCell
                                                                     edit:Nil];
         [aodSpec setProperty:kAODID forKey:@"id"];
-        [aodSpec setProperty:@"DBRAlwaysOnDisplayDetailController" forKey:@"detail"];
+        if (detailClass) {
+            [aodSpec setProperty:NSStringFromClass(detailClass) forKey:@"detail"];
+        }
 
+        // Tìm vị trí sau "Đưa lên để bật" hoặc "Tự động khóa" để chèn
         NSInteger insertIdx = -1;
         for (NSInteger i = 0; i < specs.count; i++) {
-            if ([[[specs objectAtIndex:i] propertyForKey:@"id"] isEqualToString:@"AUTOLOCK"]) {
+            NSString *sID = [[specs objectAtIndex:i] propertyForKey:@"id"];
+            if ([sID isEqualToString:@"AUTOLOCK"] || 
+                [sID isEqualToString:@"MAGNUS_AUTOLOCK"] || 
+                [sID isEqualToString:@"RAISE_TO_WAKE"]) {
                 insertIdx = i + 1;
                 break;
             }
         }
+
         if (insertIdx >= 0 && insertIdx <= specs.count) {
             [specs insertObject:aodSpec atIndex:insertIdx];
         } else {
@@ -637,57 +633,52 @@ static void TriggerNotificationBoost(void) {
 
 %end
 
+// Tùy chỉnh chi tiết trong trang con AOD
 %hook DBRAlwaysOnDisplayDetailController
 
-- (BOOL)shouldShowAlwaysOnDisplaySpecifiers {
-    return YES;
-}
-
-- (BOOL)isAlwaysOnDisplayEnabled {
-    return isAODMasterEnabled();
-}
+- (BOOL)shouldShowAlwaysOnDisplaySpecifiers { return YES; }
+- (BOOL)isAlwaysOnDisplayEnabled { return isAODMasterEnabled(); }
 
 - (id)specifiers {
     NSMutableArray *specs = %orig;
     static NSString *const kAODHzID = @"AOD_CUSTOM_HZ_KEY";
 
-    BOOL exists = NO;
     for (PSSpecifier *s in specs) {
         if ([[s propertyForKey:@"id"] isEqualToString:kAODHzID]) {
-            exists = YES;
-            break;
+            return specs;
         }
     }
 
-    if (!exists) {
-        PSSpecifier *group = [%c(PSSpecifier) preferenceSpecifierNamed:@"GIỚI HẠN PHẦN CỨNG AOD (2-20)"
-                                                               target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
-        [group setProperty:@"Ép phần cứng hạ tần số quét và độ sáng xuống tầng thấp nhất khi khóa màn hình." forKey:@"footerText"];
+    if (!specs) specs = [NSMutableArray array];
 
-        PSSpecifier *hzSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Tần số quét (2-20 Hz)"
+    PSSpecifier *group = [%c(PSSpecifier) preferenceSpecifierNamed:@"GIỚI HẠN PHẦN CỨNG AOD (2-20)"
+                                                           target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
+    [group setProperty:@"Ép phần cứng hạ tần số quét và độ sáng xuống tầng thấp nhất khi khóa màn hình." forKey:@"footerText"];
+
+    PSSpecifier *hzSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Tần số quét (2-20 Hz)"
+                                                               target:self
+                                                                  set:@selector(setCustomHz:spec:)
+                                                                  get:@selector(getCustomHz:)
+                                                               detail:Nil cell:5 edit:Nil];
+    [hzSlider setProperty:kAODHzID forKey:@"id"];
+    [hzSlider setProperty:@(2.0f) forKey:@"min"];
+    [hzSlider setProperty:@(20.0f) forKey:@"max"];
+    [hzSlider setProperty:@YES forKey:@"showValue"];
+
+    PSSpecifier *brightSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Độ sáng AOD (Mức 2-20)"
                                                                    target:self
-                                                                      set:@selector(setCustomHz:spec:)
-                                                                      get:@selector(getCustomHz:)
+                                                                      set:@selector(setCustomBrightness:spec:)
+                                                                      get:@selector(getCustomBrightness:)
                                                                    detail:Nil cell:5 edit:Nil];
-        [hzSlider setProperty:kAODHzID forKey:@"id"];
-        [hzSlider setProperty:@(2.0f) forKey:@"min"];
-        [hzSlider setProperty:@(20.0f) forKey:@"max"];
-        [hzSlider setProperty:@YES forKey:@"showValue"];
+    [brightSlider setProperty:@"AOD_CUSTOM_BRIGHTNESS_KEY" forKey:@"id"];
+    [brightSlider setProperty:@(2.0f) forKey:@"min"];
+    [brightSlider setProperty:@(20.0f) forKey:@"max"];
+    [brightSlider setProperty:@YES forKey:@"showValue"];
 
-        PSSpecifier *brightSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Độ sáng AOD (Mức 2-20)"
-                                                                       target:self
-                                                                          set:@selector(setCustomBrightness:spec:)
-                                                                          get:@selector(getCustomBrightness:)
-                                                                       detail:Nil cell:5 edit:Nil];
-        [brightSlider setProperty:@"AOD_CUSTOM_BRIGHTNESS_KEY" forKey:@"id"];
-        [brightSlider setProperty:@(2.0f) forKey:@"min"];
-        [brightSlider setProperty:@(20.0f) forKey:@"max"];
-        [brightSlider setProperty:@YES forKey:@"showValue"];
+    [specs addObject:group];
+    [specs addObject:hzSlider];
+    [specs addObject:brightSlider];
 
-        [specs addObject:group];
-        [specs addObject:hzSlider];
-        [specs addObject:brightSlider];
-    }
     return specs;
 }
 
@@ -751,7 +742,7 @@ static void TriggerNotificationBoost(void) {
 %end // Group_Preferences
 
 //==============================================================
-// 6. CONSTRUCTOR: TỰ ĐỘNG KHỞI TẠO ĐÚNG TIẾN TRÌNH THEO NHÓM
+// 6. CONSTRUCTOR: KHỞI TẠO ĐỒNG LOẠT VÀ NẠP NGAY LẬP TỨC
 //==============================================================
 
 %ctor {
@@ -759,16 +750,16 @@ static void TriggerNotificationBoost(void) {
         NSString *processName = [[NSProcessInfo processInfo] processName];
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
 
-        // Mở rộng bộ lọc nạp cho cả DisplayAndBrightnessSettings
-        if ([bundleID isEqualToString:@"com.apple.Preferences"] ||
-            [bundleID isEqualToString:@"com.apple.DisplayAndBrightnessSettings"]) {
-            %init(Group_Preferences);
-        } else if ([bundleID isEqualToString:@"com.apple.springboard"]) {
+        if ([bundleID isEqualToString:@"com.apple.springboard"]) {
             %init(Group_SpringBoard);
         } else if ([bundleID isEqualToString:@"com.apple.PosterBoard"]) {
             %init(Group_PosterBoard);
         } else if ([processName isEqualToString:@"backboardd"]) {
             %init(Group_Backboardd);
+        } else if ([bundleID isEqualToString:@"com.apple.Preferences"] || 
+                   [processName isEqualToString:@"Preferences"]) {
+            // Nạp ngay Group_Preferences khi tiến trình Cài đặt vừa khởi động
+            %init(Group_Preferences);
         }
     }
 }
