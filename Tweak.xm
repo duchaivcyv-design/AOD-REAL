@@ -1366,6 +1366,9 @@ static id gCachedFlipbookSpec = nil;
 }
 %end
 
+// -------------------------------------------------------------
+// CHẠM 2 LẦN BẬT SÁNG & CÔ LẬP CỬ CHỈ CHỐNG XUNG ĐỘT APPDATA
+// -------------------------------------------------------------
 %hook SBTapToWakeController
 
 - (BOOL)isTapToWakeSupported { return isAODMasterEnabled() ? YES : %orig; }
@@ -1400,16 +1403,17 @@ static id gCachedFlipbookSpec = nil;
     %orig(gesture);
 }
 
-%end
-
-%hook SBBacklightController
-
-- (void)_updateHIDUISensorModeForBacklightState:(long long)state source:(long long)source {
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch {
+    // Chỉ nhận diện chạm 2 lần khi máy đang ở trạng thái AOD
     if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-        %orig(1, source); // Ép bật phần cứng cảm biến tiệm cận ở State AOD
-        return;
+        return YES;
     }
-    %orig(state, source);
+    // Trả quyền hoàn toàn cho AppData và cử chỉ màn hình chính khi đang mở máy
+    return NO;
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
+    return YES;
 }
 
 %end
