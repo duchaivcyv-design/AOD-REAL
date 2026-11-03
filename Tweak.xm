@@ -468,7 +468,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 @end
 
 //==============================================================
-// 2. TẦNG DRIVER & PHẦN CỨNG (BACKBOARDD)
+// 2. TẦNG DRIVER & PHẦN CỨNG (BACKBOARDD) - ĐÃ TỐI ƯU CHỐNG JETSAM OOM
 //==============================================================
 
 %group Group_Backboardd
@@ -478,21 +478,16 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 
 - (void)setPowerState:(BOOL)state completion:(id)completion {
     if (isAODMasterEnabled()) {
-        // 1. Trường hợp hệ thống yêu cầu dập nguồn màn hình (state == NO)
         if (!state) {
-            // Nếu có policy ngắt (Pin yếu, Tiết kiệm pin, Sleep Focus) hoặc đang che cảm biến tiệm cận
             if (gCurrentState == AODStateProximityOff || shouldSuppressAODBySystemPolicies()) {
-                %orig(NO, completion); // Dập nguồn tuyệt đối để bảo vệ pin và tắt đen màn hình
+                %orig(NO, completion);
                 return;
             }
-
-            // Nếu đang trong chu trình AOD: Giữ nguồn nuôi đèn nền nhưng hoàn tất completion an toàn
-            if (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning) {
+            if (gCurrentState == AODStateActive) {
                 %orig(YES, completion);
                 return;
             }
         } else {
-            // 2. Trường hợp đánh thức màn hình sáng trở lại (state == YES)
             if (gCurrentState == AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) {
                 gCurrentState = AODStateActive;
             }
@@ -503,18 +498,18 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 
 %end
 
-// ÉP HẠ XUNG NHỊP HZ/FPS PHẦN CỨNG 1-5 HZ & CHỐNG BLANK MÀN HÌNH
+// ÉP HẠ XUNG NHỊP HZ/FPS CHỈ KHI Ở TRẠNG THÁI AOD TĨNH (TRÁNH NGHẼN BUFFER LÚC CHUYỂN CẢNH)
 %hook CAWindowServerDisplay
 
 - (float)refreshRate {
-    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-        return getCustomAODRefreshRate(); // Ép tần số quét tĩnh 1-5 Hz
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        return getCustomAODRefreshRate(); // 1.0f -> 5.0f Hz
     }
     return %orig;
 }
 
 - (void)setRefreshRate:(float)rate {
-    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
         %orig(getCustomAODRefreshRate());
         return;
     }
@@ -522,14 +517,14 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (BOOL)blankingRemovesPower {
-    if (isAODMasterEnabled() && gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
         return NO;
     }
     return %orig;
 }
 
 - (void)setBlankingRemovesPower:(BOOL)val {
-    if (isAODMasterEnabled() && gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
         %orig(NO);
         return;
     }
@@ -537,14 +532,14 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (BOOL)disabled {
-    if (isAODMasterEnabled() && gCurrentState != AODStateProximityOff && gCurrentState != AODStateIdle && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
         return NO;
     }
     return %orig;
 }
 
 - (void)setDisabled:(BOOL)val {
-    if (isAODMasterEnabled() && val && gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && val && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
         %orig(NO);
         return;
     }
@@ -552,14 +547,14 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (BOOL)isBlanked {
-    if (isAODMasterEnabled() && gCurrentState != AODStateProximityOff && gCurrentState != AODStateIdle && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
         return NO;
     }
     return %orig;
 }
 
 - (void)setBlanked:(BOOL)blanked {
-    if (isAODMasterEnabled() && blanked && gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && blanked && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
         %orig(NO);
         return;
     }
@@ -567,14 +562,14 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (BOOL)disablesUpdates {
-    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-        return NO; // Ngăn chặn Watchdog đánh dấu đơ màn hình khi chạy ở 1 Hz
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        return NO;
     }
     return %orig;
 }
 
 - (void)setDisablesUpdates:(BOOL)val {
-    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
         %orig(NO);
         return;
     }
@@ -582,14 +577,19 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (BOOL)isFlipBookActive {
-    if (isAODMasterEnabled() && gCurrentState != AODStateIdle && gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
         return YES;
     }
     return %orig;
 }
 
-- (BOOL)isFlipBookEnabled { return isAODMasterEnabled() ? YES : %orig; }
-- (void)setFlipBookEnabled:(BOOL)val { %orig(isAODMasterEnabled() ? YES : val); }
+- (BOOL)isFlipBookEnabled { 
+    return isAODMasterEnabled() ? YES : %orig; 
+}
+
+- (void)setFlipBookEnabled:(BOOL)val { 
+    %orig(isAODMasterEnabled() ? YES : val); 
+}
 
 - (BOOL)isFlipBookSuppressed {
     if (isAODMasterEnabled() && (gCurrentState == AODStateProximityOff || shouldSuppressAODBySystemPolicies())) {
@@ -599,7 +599,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (void)setFlipBookSuppressed:(BOOL)suppressed {
-    if (isAODMasterEnabled() && gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies() && suppressed) {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies() && suppressed) {
         %orig(NO);
         return;
     }
@@ -607,7 +607,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (void)powerStateDidChange:(id)arg1 {
-    if (isAODMasterEnabled() && gCurrentState != AODStateIdle && gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
         return;
     }
     %orig(arg1);
@@ -616,16 +616,16 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 %end
 
 %hook BKDisplayRenderOverlay
-- (BOOL)disablesDisplayBlanking { return isAODMasterEnabled() ? YES : %orig; }
+- (BOOL)disablesDisplayBlanking { 
+    return (isAODMasterEnabled() && gCurrentState == AODStateActive) ? YES : %orig; 
+}
 %end
 
 %hook BKDisplayManager
 - (void)setBlanked:(BOOL)blanked withReason:(id)reason {
-    if (isAODMasterEnabled() && blanked) {
-        if (gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) {
-            %orig(NO, reason);
-            return;
-        }
+    if (isAODMasterEnabled() && blanked && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
+        %orig(NO, reason);
+        return;
     }
     %orig(blanked, reason);
 }
@@ -644,13 +644,11 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
     return %orig;
 }
 
-- (BOOL)isAlwaysOnDisabledByAssertion { return %orig; }
-
 - (long long)backlightState {
     long long state = %orig;
     if (isAODMasterEnabled() && state == 0) {
         if (gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) {
-            return 2; // Ép giữ State AOD của BacklightServices
+            return 2;
         }
     }
     return state;
@@ -681,15 +679,17 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 %hook BLSHFlipbookSpecification
 
 - (double)framesPerSecond {
-    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-        return (double)getCustomAODRefreshRate(); // 1.0f -> 5.0f Hz
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        return (double)getCustomAODRefreshRate();
     }
     return %orig;
 }
 
-// Bắt buộc cho 1Hz: Cho phép trễ 1 giây giữa các frame mà không kích hoạt watchdog timeout
 - (double)minimumGapDuration {
-    if (isAODMasterEnabled()) return 1.0;
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        double fps = (double)getCustomAODRefreshRate();
+        return (fps <= 1.0) ? 1.0 : (1.0 / fps);
+    }
     return %orig;
 }
 
@@ -716,18 +716,9 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
     return isAODMasterEnabled() ? YES : %orig; 
 }
 
-- (void)startLiveUpdates {
-    %orig;
-    if (isAODMasterEnabled()) {
-        @try {
-            [self main_performLiveUpdateIfNeeded];
-        } @catch (NSException *e) {}
-    }
-}
-
 - (void)suspendForReason:(id)reason {
     if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
-        return; // Ngăn engine đóng băng vòng lặp khi màn hình đang hiển thị AOD
+        return;
     }
     %orig(reason);
 }
@@ -741,7 +732,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (BOOL)isAlwaysOnActive { 
-    return (isAODMasterEnabled() && gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) ? YES : %orig; 
+    return (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) ? YES : %orig; 
 }
 
 - (BOOL)isClientActive { 
