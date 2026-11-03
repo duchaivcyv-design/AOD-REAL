@@ -1366,7 +1366,7 @@ static id gCachedFlipbookSpec = nil;
 }
 %end
 
-// -------------------------------------------------------------
+// -------------------------------------------------------------// -------------------------------------------------------------
 // CHẠM 2 LẦN BẬT SÁNG & CÔ LẬP CỬ CHỈ CHỐNG XUNG ĐỘT APPDATA
 // -------------------------------------------------------------
 %hook SBTapToWakeController
@@ -1404,20 +1404,24 @@ static id gCachedFlipbookSpec = nil;
 }
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch {
-    // Chỉ nhận diện chạm 2 lần khi máy đang ở trạng thái AOD
+    // Chỉ nhận diện chạm 2 lần khi máy đang ở trạng thái khóa AOD
     if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
         return YES;
     }
-    // Trả quyền hoàn toàn cho AppData và cử chỉ màn hình chính khi đang mở máy
+    // Khi màn hình đang mở dùng bình thường, trả quyền hoàn toàn cho AppData và hệ thống
     return NO;
 }
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
+    // Cho phép cử chỉ nhận diện song song, không nuốt event của tweak khác
     return YES;
 }
 
 %end
 
+// -------------------------------------------------------------
+// CẢM BIẾN TIỆM CẬN: CHE CAMERA LẬP TỨC TẮT ĐEN TOÀN BỘ
+// -------------------------------------------------------------
 %hook SBProximitySensorManager
 
 - (BOOL)isProximityDetectionPermitted {
@@ -1465,26 +1469,7 @@ static id gCachedFlipbookSpec = nil;
 
 %end
 
-// Đảm bảo gesture chạm 2 lần của AOD không đè lên gesture vuốt menu icon của AppData
-%hook SBTapToWakeController
-
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch {
-    // Chỉ nhận cảm ứng chạm 2 lần khi máy đang ở trạng thái khóa AOD
-    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-        return YES;
-    }
-    // Khi màn hình đang mở dùng bình thường, trả quyền hoàn toàn cho AppData và hệ thống
-    return NO;
-}
-
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
-    // Cho phép cử chỉ nhận diện song song, không nuốt event của tweak khác
-    return YES;
-}
-
-%end
-
-%end
+%end // Group_SpringBoard
 
 //==============================================================
 // 4. TẦNG POSTERBOARD: LÀM TỐI & ÉP MỜ HÌNH NỀN THEO CÔNG TẮC GỐC
