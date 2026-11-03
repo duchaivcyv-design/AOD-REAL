@@ -1138,7 +1138,7 @@ static id gCachedFlipbookSpec = nil;
 %end
 
 // -------------------------------------------------------------
-// ĐIỀU PHỐI ĐỘ SÁNG MÀN HÌNH VÀ VÒNG ĐỜI AOD
+// ĐIỀU PHỐI ĐỘ SÁNG MÀN HÌNH VÀ VÒNG ĐỜI AOD (CHUẨN GỐC, KHÔNG GIẬT KHUNG HÌNH)
 // -------------------------------------------------------------
 %hook SBBacklightController
 
@@ -1155,31 +1155,27 @@ static id gCachedFlipbookSpec = nil;
         if (gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) {
             gCurrentState = AODStateTransitioning;
             
+            // Kích hoạt chu trình chuyển cảnh mềm gốc của CoverSheet (Lặn sáng 0.45s)
             if (gCoverSheetVC && [gCoverSheetVC respondsToSelector:@selector(_updateAppearanceForAODTransitionToInactive:)]) {
                 [gCoverSheetVC _updateAppearanceForAODTransitionToInactive:YES];
-            }
-            
-            if (gCombinedListVC) {
-                [gCombinedListVC _setNotificationListHidden:!isNotificationsEnabled() forReason:@"AODTransition"];
             }
             
             [UIView animateWithDuration:0.45f delay:0.0f options:UIViewAnimationOptionCurveEaseInOut animations:^{
                 gCurrentAODProgress = 0.0f;
                 if (gCoverSheetVC) [gCoverSheetVC _updateWallpaperEffectView];
             } completion:^(BOOL finished) {
-                gCurrentState = AODStateActive;
+                if (finished) {
+                    gCurrentState = AODStateActive;
+                }
             }];
             
-            state = 2; // Giữ State AOD
+            state = 2; // Giữ State AOD của BacklightServices
         }
     } else if (state != 0 && state != 2) {
         gCurrentState = AODStateIdle;
         gCurrentAODProgress = 1.0f;
         if (gCoverSheetVC && [gCoverSheetVC respondsToSelector:@selector(_updateAppearanceForAODTransitionToInactive:)]) {
             [gCoverSheetVC _updateAppearanceForAODTransitionToInactive:NO];
-        }
-        if (gCombinedListVC) {
-            [gCombinedListVC _setNotificationListHidden:NO forReason:@"AODWake"];
         }
     }
     %orig(state, source, YES, completion);
@@ -1264,7 +1260,8 @@ static id gCachedFlipbookSpec = nil;
                         unsigned long long softLimit = 52428800;
                         unsigned long long cap = 120;
                         double fps = (double)getCustomAODRefreshRate();
-                        double minGap = 0.0;
+                        // minGap = 1.0 giúp pipeline tại 1Hz - 5Hz không bị hệ thống dập tắt do hiểu nhầm là treo máy
+                        double minGap = (fps <= 1.0) ? 1.0 : (1.0 / fps);
                         double coalescing = 0.1;
                         double minPrep = 0.05;
                         double maxRend = 0.25;
