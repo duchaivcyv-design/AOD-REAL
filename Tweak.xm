@@ -29,8 +29,8 @@ static BOOL gCachedAODEnabled = YES;
 static BOOL gCachedWallpaperEnabled = YES;
 static BOOL gCachedBlurWallpaperEnabled = YES;
 static BOOL gCachedNotificationsEnabled = YES;
-static float gCachedCustomHz = 2.0f;
-static float gCachedBrightnessFactor = 0.005f; // Mặc định nấc 5 (tương đương 0.5% độ sáng panel)
+static float gCachedCustomHz = 1.0f; // Mặc định 1.0 Hz
+static float gCachedBrightnessFactor = 0.005f;
 
 static inline void loadAODPreferences(void) {
     Boolean valid = false;
@@ -47,7 +47,7 @@ static inline void loadAODPreferences(void) {
     if (!valid) wpVal = CFPreferencesGetAppBooleanValue(CFSTR("ShowWallpaperInAlwaysOn"), CFSTR("com.jb.aodreal"), &valid);
     gCachedWallpaperEnabled = valid ? (BOOL)wpVal : YES;
 
-    // 3. Công tắc Làm mờ hình nền (Blur Wallpaper Photo)
+    // 3. Công tắc Làm mờ ảnh trên hình nền
     valid = false;
     Boolean blurVal = CFPreferencesGetAppBooleanValue(CFSTR("BlurWallpaperInAlwaysOn"), CFSTR("com.apple.BacklightServices"), &valid);
     if (!valid) blurVal = CFPreferencesGetAppBooleanValue(CFSTR("BlurWallpaperInAlwaysOn"), CFSTR("com.jb.aodreal"), &valid);
@@ -59,23 +59,22 @@ static inline void loadAODPreferences(void) {
     if (!valid) notiVal = CFPreferencesGetAppBooleanValue(CFSTR("ShowNotificationsInAlwaysOn"), CFSTR("com.jb.aodreal"), &valid);
     gCachedNotificationsEnabled = valid ? (BOOL)notiVal : YES;
 
-    // 5. Nấc tần số quét tĩnh (2 - 5 - 10 - 15 - 20 Hz)
+    // 5. Nấc tần số quét tĩnh (1 - 5 Hz)
     CFPropertyListRef hzVal = CFPreferencesCopyAppValue(CFSTR("CustomAODRefreshRate"), CFSTR("com.jb.aodreal"));
     if (hzVal) {
         if (CFGetTypeID(hzVal) == CFNumberGetTypeID()) {
             float r = [(__bridge NSNumber *)hzVal floatValue];
-            if (r >= 2.0f && r <= 20.0f) gCachedCustomHz = r;
+            if (r >= 1.0f && r <= 5.0f) gCachedCustomHz = r;
         }
         CFRelease(hzVal);
     }
 
-    // 6. Nấc độ sáng panel tĩnh (0.5 - 1 - 5 - 10 - 15 - 20)
+    // 6. Nấc độ sáng panel tĩnh
     CFPropertyListRef brVal = CFPreferencesCopyAppValue(CFSTR("CustomAODBrightness"), CFSTR("com.jb.aodreal"));
     if (brVal) {
         if (CFGetTypeID(brVal) == CFNumberGetTypeID()) {
             float b = [(__bridge NSNumber *)brVal floatValue];
             if (b >= 0.5f && b <= 20.0f) {
-                // Chia cho 1000.0f để ra hệ số backlight factor thực tế (0.0005f -> 0.020f)
                 gCachedBrightnessFactor = b / 1000.0f;
             }
         }
@@ -92,14 +91,12 @@ static inline float getCustomAODRefreshRate(void) { return gCachedCustomHz; }
 static inline float getAODPanelBrightnessFactor(void) { return gCachedBrightnessFactor; }
 static inline float getCustomAODBrightnessFactor(void) { return gCachedBrightnessFactor; }
 
-// CHÍNH SÁCH NGẮT AOD TỰ ĐỘNG CHUẨN GỐC APPLE (KHÔNG GÂY DEADLOCK/SIGTRAP TRÊN SPRINGBOARD)
+// CHÍNH SÁCH NGẮT AOD TỰ ĐỘNG CHUẨN GỐC APPLE (IOKIT AN TOÀN - CHỐNG SIGTRAP SPRINGBOARD)
 static inline BOOL shouldSuppressAODBySystemPolicies(void) {
-    // 1. Chế độ nguồn điện thấp (Tiết kiệm pin)
     if ([[NSProcessInfo processInfo] isLowPowerModeEnabled]) {
         return YES;
     }
 
-    // 2. Đọc mức pin trực tiếp từ kernel IOKit (Tránh gọi UIDevice làm trigger batteryStatusDidChange)
     CFTypeRef powerInfo = IOPSCopyPowerSourcesInfo();
     if (powerInfo) {
         CFArrayRef powerSourcesList = IOPSCopyPowerSourcesList(powerInfo);
@@ -109,7 +106,6 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
                 CFDictionaryRef desc = IOPSGetPowerSourceDescription(powerInfo, CFArrayGetValueAtIndex(powerSourcesList, i));
                 if (desc) {
                     CFStringRef state = (CFStringRef)CFDictionaryGetValue(desc, CFSTR(kIOPSPowerSourceStateKey));
-                    // Đang cắm sạc thì không tự ngắt AOD
                     if (state && CFStringCompare(state, CFSTR(kIOPSACPowerValue), 0) == kCFCompareEqualTo) {
                         CFRelease(powerSourcesList);
                         CFRelease(powerInfo);
@@ -124,7 +120,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
                         CFNumberGetValue(maxCapNum, kCFNumberIntType, &max);
                         if (max > 0) {
                             int percent = (cur * 100) / max;
-                            if (percent <= 5) { // Pin <= 5% -> Tự ngắt AOD
+                            if (percent <= 5) { // Pin <= 5% -> ngắt AOD
                                 CFRelease(powerSourcesList);
                                 CFRelease(powerInfo);
                                 return YES;
@@ -171,6 +167,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 
 @interface BLSHFlipbookSpecification : NSObject
 - (double)framesPerSecond;
+- (double)minimumGapDuration;
 @end
 
 @interface SBBacklightPlatformProvider : NSObject
@@ -288,8 +285,26 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 - (NSArray *)sceneHostEnvironmentEntriesForBacklightSession;
 @end
 
+@interface CSHomeAffordanceViewController : UIViewController
+- (BOOL)isHomeAffordanceHidden;
+@end
+
+@interface CSQuickActionsViewController : UIViewController
+- (BOOL)isQuickActionsHidden;
+- (void)_updateQuickActionListHidden:(BOOL)hidden;
+@end
+
+@interface CSStatusBarViewController : UIViewController
+- (BOOL)isStatusBarHidden;
+@end
+
+@interface NCNotificationShortLookView : UIView
+- (void)setLegibilitySettings:(id)settings;
+@end
+
 @interface _UILegibilitySettings : NSObject
 + (instancetype)sharedInstanceForStyle:(long long)style;
+- (UIColor *)primaryColor;
 @end
 
 @interface SBFLockScreenDateView : UIView
@@ -326,13 +341,20 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 - (void)tapToWakeControllerDidRecognizeWakeGesture:(id)gesture;
 @end
 
-@interface SBTapToWakeController : NSObject
+@interface SBTapToWakeController : NSObject <UIGestureRecognizerDelegate>
 - (BOOL)isTapToWakeSupported;
 - (BOOL)shouldTapToWake;
 - (void)setDigitizerInTapToWakeMode:(BOOL)mode;
 - (void)setDigitizerModeRequiresHitTestSuppression:(BOOL)suppress;
 - (void)setTapToWakeGestureRecognizer:(UITapGestureRecognizer *)gesture;
 - (void)tapToWakeDidRecognize:(UITapGestureRecognizer *)arg1;
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch;
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer;
+@end
+
+@interface SBUIController : NSObject
++ (instancetype)sharedInstance;
+- (BOOL)handleHomeButtonDoublePressRequest;
 @end
 
 @interface SBBacklightController : NSObject
@@ -396,6 +418,16 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 - (void)setLinearBacklightProgress:(CGFloat)progress;
 - (long long)luminance;
 - (BOOL)isLowLuminance;
+- (BOOL)isLegibilityBlurEnabled;
+@end
+
+@interface PRPosterLockPosterAppearance : NSObject
+- (BOOL)isLegibilityBlurEnabled;
+- (BOOL)allowsModifyingLegibilityBlur;
+@end
+
+@interface PRPosterConfiguration : NSObject
+- (BOOL)isLegibilityBlurEnabled;
 @end
 
 @interface PRPosterLockPosterHomeScreenAppearance : NSObject
@@ -1618,7 +1650,7 @@ static id gCachedFlipbookSpec = nil;
 }
 %end
 
-// TRANG CON AOD: BỐ CỤC CHUẨN XÁC THEO VIDEO GỐC (ẨN SẠCH CÔNG CỤ THỪA)
+// TRANG CON AOD: BỐ CỤC CHUẨN XÁC KÈM ĐIỀU CHỈNH HZ VÀ ĐỘ SÁNG
 %hook DBSAlwaysOnViewController
 
 - (id)isAlwaysOnEnabled:(PSSpecifier *)specifier { 
@@ -1644,7 +1676,7 @@ static id gCachedFlipbookSpec = nil;
     [headerGroup setProperty:@"Màn hình Luôn bật làm mờ màn hình khóa trong khi vẫn hiển thị thông tin như thời gian, tiện ích và thông báo bằng cách sử dụng mức năng lượng tối thiểu.\n\nMàn hình sẽ tự động tắt khi không được sử dụng để duy trì thời lượng pin." forKey:@"footerText"];
     [specs addObject:headerGroup];
 
-    // NHÓM 2: CÁC CÔNG TẮC CON (CHỈ HIỆN KHI BẬT MÀN HÌNH LUÔN BẬT)
+    // NHÓM 2: CÁC CÔNG TẮC CON VÀ PHẦN CỨNG (CHỈ HIỆN KHI BẬT MÀN HÌNH LUÔN BẬT)
     if (isAODMasterEnabled()) {
         PSSpecifier *subGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"TÙY CHỈNH" target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
         [specs addObject:subGroup];
@@ -1678,9 +1710,40 @@ static id gCachedFlipbookSpec = nil;
                                                                        cell:6 // PSSwitchCell
                                                                        edit:Nil];
         [specs addObject:notiSwitch];
+
+        // NHÓM 3: TẦN SỐ QUÉT VÀ ĐỘ SÁNG MÀN HÌNH TĨNH
+        PSSpecifier *hwGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"CẤU HÌNH PHẦN CỨNG" target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
+        [hwGroup setProperty:@"Chọn cố định tần số quét tĩnh (1–5 Hz) và mức độ sáng panel khi hiển thị AOD." forKey:@"footerText"];
+        [specs addObject:hwGroup];
+
+        // Dải tần số quét tĩnh: 1, 2, 3, 4, 5 Hz
+        PSSpecifier *hzSegment = [%c(PSSpecifier) preferenceSpecifierNamed:@"Tần số quét tĩnh (Hz)"
+                                                                    target:self
+                                                                       set:@selector(setCustomHz:spec:)
+                                                                       get:@selector(getCustomHz:)
+                                                                    detail:Nil
+                                                                      cell:3 // PSSegmentCell
+                                                                      edit:Nil];
+        [hzSegment setProperty:@"AOD_CUSTOM_HZ_KEY" forKey:@"id"];
+        [hzSegment setProperty:@[@1, @2, @3, @4, @5] forKey:@"validValues"];
+        [hzSegment setProperty:@[@"1Hz", @"2Hz", @"3Hz", @"4Hz", @"5Hz"] forKey:@"validTitles"];
+        [specs addObject:hzSegment];
+
+        // Dải độ sáng panel: 0.5, 1, 5, 10, 15, 20
+        PSSpecifier *brightSegment = [%c(PSSpecifier) preferenceSpecifierNamed:@"Độ sáng nền AOD"
+                                                                        target:self
+                                                                           set:@selector(setCustomBrightness:spec:)
+                                                                           get:@selector(getCustomBrightness:)
+                                                                        detail:Nil
+                                                                          cell:3 // PSSegmentCell
+                                                                          edit:Nil];
+        [brightSegment setProperty:@"AOD_CUSTOM_BRIGHTNESS_KEY" forKey:@"id"];
+        [brightSegment setProperty:@[@0.5f, @1.0f, @5.0f, @10.0f, @15.0f, @20.0f] forKey:@"validValues"];
+        [brightSegment setProperty:@[@"0.5", @"1", @"5", @"10", @"15", @"20"] forKey:@"validTitles"];
+        [specs addObject:brightSegment];
     }
 
-    // NHÓM 3: CÔNG TẮC CHÍNH NẰM Ở NHÓM DƯỚI CÙNG
+    // NHÓM 4: CÔNG TẮC CHÍNH NẰM DƯỚI CÙNG
     PSSpecifier *mainGroup = [%c(PSSpecifier) preferenceSpecifierNamed:nil target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
     [mainGroup setProperty:@"Khi Màn hình Luôn bật bị tắt, màn hình sẽ tắt sau khi iPhone bị khóa." forKey:@"footerText"];
     [specs addObject:mainGroup];
@@ -1699,7 +1762,7 @@ static id gCachedFlipbookSpec = nil;
     return specs;
 }
 
-// BINDING TRỰC TIẾP CHO 3 CÔNG TẮC CON
+// BINDING CHO 3 CÔNG TẮC CON
 %new
 - (void)setWallpaperSwitch:(id)value spec:(PSSpecifier *)spec {
     CFPreferencesSetAppValue(CFSTR("ShowWallpaperInAlwaysOn"), (__bridge CFPropertyListRef)(value), CFSTR("com.apple.BacklightServices"));
@@ -1745,6 +1808,33 @@ static id gCachedFlipbookSpec = nil;
     return @(isNotificationsEnabled());
 }
 
+// BINDING CHO DẢI TẦN SỐ QUÉT VÀ ĐỘ SÁNG
+%new
+- (void)setCustomHz:(id)value spec:(PSSpecifier *)spec {
+    CFPreferencesSetAppValue(CFSTR("CustomAODRefreshRate"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
+    CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
+    loadAODPreferences();
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
+}
+
+%new
+- (id)getCustomHz:(PSSpecifier *)spec {
+    return @((int)getCustomAODRefreshRate());
+}
+
+%new
+- (void)setCustomBrightness:(id)value spec:(PSSpecifier *)spec {
+    CFPreferencesSetAppValue(CFSTR("CustomAODBrightness"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
+    CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
+    loadAODPreferences();
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
+}
+
+%new
+- (id)getCustomBrightness:(PSSpecifier *)spec {
+    return @(getCustomAODBrightnessFactor() * 1000.0f);
+}
+
 %end // DBSAlwaysOnViewController
 
 %end // Group_Preferences
@@ -1770,7 +1860,7 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
             NULL,
-            AODPreferencesReloadCallback,
+            (CFNotificationCallback)AODPreferencesReloadCallback,
             CFSTR("com.jb.aodreal/preferences.changed"),
             NULL,
             CFNotificationSuspensionBehaviorDeliverImmediately
