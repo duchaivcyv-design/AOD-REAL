@@ -812,14 +812,6 @@ static id gCachedFlipbookSpec = nil;
     return %orig;
 }
 
-// BẬT/TẮT STATUS BAR THEO ĐÚNG CHUẨN ENGINE CỦA APPLE (KHÔNG CAN THIỆP THỦ CÔNG GÂY MẤT THANH TRÊN)
-- (BOOL)shouldStatusBarBeHidden {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        return YES; // Chỉ ẩn thanh trên khi đang ở AOD
-    }
-    return %orig; // Màn hình khóa bình thường vẫn hiển thị 100%
-}
-
 // HIỆU ỨNG ÉP VÀO LẶN SÁNG CHUẨN AOD GỐC APPLE (NHƯ VIDEO GIÂY 0:04 & 0:08)
 - (void)_updateAppearanceForAODTransitionToInactive:(BOOL)inactive {
     %orig(inactive);
@@ -831,7 +823,6 @@ static id gCachedFlipbookSpec = nil;
     }
 
     if (inactive) {
-        // Chống lặp kích hoạt lại khi đang ở AOD
         if (gCurrentState == AODStateActive) return;
         gCurrentState = AODStateTransitioning;
 
@@ -847,7 +838,6 @@ static id gCachedFlipbookSpec = nil;
         } completion:^(BOOL finished) {
             if (finished) {
                 gCurrentState = AODStateActive;
-                // Áp dụng ẩn phụ trợ an toàn, TUYỆT ĐỐI KHÔNG GỌI LẠI _updateContent
                 @try {
                     UIViewController *homeAffordanceVC = [self valueForKey:@"_homeAffordanceViewController"];
                     if (homeAffordanceVC) homeAffordanceVC.view.alpha = 0.0f;
@@ -880,38 +870,16 @@ static id gCachedFlipbookSpec = nil;
     }
 }
 
-// ẨN GIAO DIỆN PHỤ AN TOÀN - NGẮT HOÀN TOÀN ĐỆ QUY GÂY CRASH LOOP
+// CHỈ ĐIỀU KHIỂN DANH SÁCH THÔNG BÁO - TUYỆT ĐỐI KHÔNG CAN THIỆP VIEW PHỤ Ở ĐÂY
 - (void)_updateContent {
     %orig;
 
     if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
         @try {
-            UIViewController *homeAffordanceVC = [self valueForKey:@"_homeAffordanceViewController"];
-            if (homeAffordanceVC && homeAffordanceVC.view.alpha != 0.0f) {
-                homeAffordanceVC.view.alpha = 0.0f;
-            }
-
-            UIViewController *quickActionsVC = [self valueForKey:@"_quickActionsViewController"];
-            if (quickActionsVC && quickActionsVC.view.alpha != 0.0f) {
-                quickActionsVC.view.alpha = 0.0f;
-            }
-
             UIViewController *combinedListVC = [self valueForKey:@"_combinedListViewController"];
             if (combinedListVC) {
                 combinedListVC.view.hidden = !isNotificationsEnabled();
                 combinedListVC.view.alpha = isNotificationsEnabled() ? 1.0f : 0.0f;
-            }
-        } @catch (NSException *e) {}
-    } else if (gCurrentState == AODStateIdle) {
-        @try {
-            UIViewController *homeAffordanceVC = [self valueForKey:@"_homeAffordanceViewController"];
-            if (homeAffordanceVC && homeAffordanceVC.view.alpha != 1.0f) {
-                homeAffordanceVC.view.alpha = 1.0f;
-            }
-
-            UIViewController *quickActionsVC = [self valueForKey:@"_quickActionsViewController"];
-            if (quickActionsVC && quickActionsVC.view.alpha != 1.0f) {
-                quickActionsVC.view.alpha = 1.0f;
             }
         } @catch (NSException *e) {}
     }
@@ -932,7 +900,6 @@ static id gCachedFlipbookSpec = nil;
 
     if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
         if (!isWallpaperEnabled()) {
-            // TẮT HÌNH NỀN: ÉP ĐEN HOÀN TOÀN TẤT CẢ LỚP NỀN
             if (floatingLayer) floatingLayer.alpha = 0.0f;
             if (bgView) bgView.alpha = 0.0f;
             if (effectView) {
@@ -942,7 +909,6 @@ static id gCachedFlipbookSpec = nil;
             }
             self.view.backgroundColor = [UIColor blackColor];
         } else {
-            // HIỆN HÌNH NỀN: ĐỒNG BỘ HIỆU ỨNG LÀM MỜ ẢNH NỀN
             if (floatingLayer) floatingLayer.alpha = 1.0f;
             if (bgView) bgView.alpha = 1.0f;
             if (effectView) {
@@ -971,7 +937,7 @@ static id gCachedFlipbookSpec = nil;
 
 - (NSArray *)sceneHostEnvironmentEntriesForBacklightSession {
     if (isAODMasterEnabled() && !isWallpaperEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-        return @[]; // Ngắt phiên poster để tránh bị lọt hình nền cũ
+        return @[];
     }
     NSArray *entries = %orig;
     if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
@@ -1289,6 +1255,7 @@ static id gCachedFlipbookSpec = nil;
 %end
 
 %hook SBBacklightPlatformProvider
+
 - (id)initWithBacklightEnvironmentSessionProvider:(id)provider {
     if (provider) {
         gInjectedSessionProvider = provider;
@@ -1297,6 +1264,7 @@ static id gCachedFlipbookSpec = nil;
 }
 
 - (BOOL)deviceSupportsAlwaysOn { return isAODMasterEnabled() ? YES : %orig; }
+
 - (BOOL)isAlwaysOnEnabled { 
     if (shouldSuppressAODBySystemPolicies()) return NO;
     return isAODMasterEnabled() ? YES : %orig; 
@@ -1307,44 +1275,15 @@ static id gCachedFlipbookSpec = nil;
     if (orig) return orig;
     
     if (isAODMasterEnabled()) {
-        if (!gCachedFlipbookSpec) {
+        static dispatch_once_t onceToken;
+        dispatch_once(&onceToken, ^{
             Class specClass = NSClassFromString(@"BLSHFlipbookSpecification");
             if (specClass) {
                 @try {
-                    SEL sel1 = @selector(initWithSoftMemoryLimit:frameCapacity:framesPerSecond:minimumGapDuration:coaelscingEpsilon:minimumPrepareInterval:maximumRenderInterval:);
-                    if ([specClass instancesRespondToSelector:sel1]) {
-                        NSMethodSignature *sig = [specClass instanceMethodSignatureForSelector:sel1];
-                        NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-                        id instance = [specClass alloc];
-                        [inv setTarget:instance];
-                        [inv setSelector:sel1];
-                        
-                        unsigned long long softLimit = 52428800;
-                        unsigned long long cap = 120;
-                        double fps = (double)getCustomAODRefreshRate();
-                        // minGap = 1.0 giúp pipeline tại 1Hz - 5Hz không bị hệ thống dập tắt do hiểu nhầm là treo máy
-                        double minGap = (fps <= 1.0) ? 1.0 : (1.0 / fps);
-                        double coalescing = 0.1;
-                        double minPrep = 0.05;
-                        double maxRend = 0.25;
-                        
-                        [inv setArgument:&softLimit atIndex:2];
-                        [inv setArgument:&cap atIndex:3];
-                        [inv setArgument:&fps atIndex:4];
-                        [inv setArgument:&minGap atIndex:5];
-                        [inv setArgument:&coalescing atIndex:6];
-                        [inv setArgument:&minPrep atIndex:7];
-                        [inv setArgument:&maxRend atIndex:8];
-                        [inv invoke];
-                        [inv getReturnValue:&gCachedFlipbookSpec];
-                    } else {
-                        gCachedFlipbookSpec = [[specClass alloc] init];
-                    }
-                } @catch (NSException *e) {
                     gCachedFlipbookSpec = [[specClass alloc] init];
-                }
+                } @catch (NSException *e) {}
             }
-        }
+        });
         return gCachedFlipbookSpec;
     }
     return nil;
@@ -1364,24 +1303,25 @@ static id gCachedFlipbookSpec = nil;
 }
 
 - (BOOL)isShowingBlankingWindow {
-    if (isAODMasterEnabled() && gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) return NO;
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) return NO;
     return %orig;
 }
 
 - (void)showBlankingWindow:(BOOL)show withFadeDuration:(double)duration {
-    if (isAODMasterEnabled() && show && gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) return;
+    if (isAODMasterEnabled() && show && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) return;
     %orig(show, duration);
 }
 
 - (void)_setBlankingWindowVisible:(BOOL)visible fadeDuration:(double)duration {
-    if (isAODMasterEnabled() && visible && gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) return;
+    if (isAODMasterEnabled() && visible && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) return;
     %orig(visible, duration);
 }
 
 - (BOOL)isUsingAlwaysOnBrightnessCurve {
-    if (isAODMasterEnabled() && gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) return YES;
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) return YES;
     return %orig;
 }
+
 %end
 
 // -------------------------------------------------------------
