@@ -1,6 +1,6 @@
 Package: com.jb.aodreal
 Name: AODREAL
-Version: 0.1.0t
+Version: 0.7.5b
 Architecture: iphoneos-arm64
 Description: Unlock native AOD engine with forced 2-20Hz hardware refresh rate for iPhone 8 - XS Max
 Maintainer: jb
