@@ -766,6 +766,19 @@ static CSCombinedListViewController *gCombinedListVC = nil;
 static id gCachedFlipbookSpec = nil;
 
 // -------------------------------------------------------------
+// KHỞI ĐỘNG AN TOÀN: CHẶN AOD CAN THIỆP KHI SPRINGBOARD ĐANG BOOT
+// -------------------------------------------------------------
+%hook SpringBoard
+
+- (void)applicationDidFinishLaunching:(id)application {
+    %orig;
+    // Bật cờ cho phép AOD hoạt động chỉ khi toàn bộ SpringBoard đã khởi động hoàn tất
+    gSpringBoardDidFinishLaunching = YES;
+}
+
+%end
+
+// -------------------------------------------------------------
 // COVERSHEET: ĐIỀU PHỐI AOD, NỀN VÀ HIỆU ỨNG CHUYỂN CẢNH MƯỢT
 // -------------------------------------------------------------
 %hook CSCoverSheetViewController
@@ -1059,10 +1072,19 @@ static id gCachedFlipbookSpec = nil;
 }
 
 - (_UILegibilitySettings *)legibilitySettings {
+    _UILegibilitySettings *orig = %orig;
     if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-        return [%c(_UILegibilitySettings) sharedInstanceForStyle:1]; // White High Contrast
+        UIColor *textColor = orig ? [orig primaryColor] : nil;
+        if (textColor) {
+            CGFloat r = 0, g = 0, b = 0, a = 0;
+            [textColor getRed:&r green:&g blue:&b alpha:&a];
+            if (r < 0.25f && g < 0.25f && b < 0.25f) {
+                return [%c(_UILegibilitySettings) sharedInstanceForStyle:1]; // White High Contrast
+            }
+        }
+        return orig;
     }
-    return %orig;
+    return orig;
 }
 %end
 
@@ -1076,10 +1098,19 @@ static id gCachedFlipbookSpec = nil;
 }
 
 - (_UILegibilitySettings *)legibilitySettings {
+    _UILegibilitySettings *orig = %orig;
     if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-        return [%c(_UILegibilitySettings) sharedInstanceForStyle:1];
+        UIColor *textColor = orig ? [orig primaryColor] : nil;
+        if (textColor) {
+            CGFloat r = 0, g = 0, b = 0, a = 0;
+            [textColor getRed:&r green:&g blue:&b alpha:&a];
+            if (r < 0.25f && g < 0.25f && b < 0.25f) {
+                return [%c(_UILegibilitySettings) sharedInstanceForStyle:1];
+            }
+        }
+        return orig;
     }
-    return %orig;
+    return orig;
 }
 
 - (void)_updateWithFrameSpecifier:(id)arg1 {
@@ -1366,7 +1397,7 @@ static id gCachedFlipbookSpec = nil;
 }
 %end
 
-// -------------------------------------------------------------// -------------------------------------------------------------
+// -------------------------------------------------------------
 // CHẠM 2 LẦN BẬT SÁNG & CÔ LẬP CỬ CHỈ CHỐNG XUNG ĐỘT APPDATA
 // -------------------------------------------------------------
 %hook SBTapToWakeController
