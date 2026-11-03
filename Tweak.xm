@@ -786,7 +786,7 @@ static id gCachedFlipbookSpec = nil;
 %end
 
 // -------------------------------------------------------------
-// COVERSHEET: ĐIỀU PHỐI AOD, NỀN VÀ HIỆU ỨNG CHUYỂN CẢNH MƯỢT
+// COVERSHEET: ĐIỀU PHỐI AOD, NỀN VÀ HIỆU ỨNG CHUYỂN CẢNH MƯỢT (CHỐNG CRASH LOOP)
 // -------------------------------------------------------------
 %hook CSCoverSheetViewController
 
@@ -804,23 +804,29 @@ static id gCachedFlipbookSpec = nil;
 
 - (BOOL)isAlwaysOnPresentation { 
     if (shouldSuppressAODBySystemPolicies()) return NO;
-    return (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) ? YES : %orig; 
+    return (isAODMasterEnabled() && gCurrentState == AODStateActive) ? YES : %orig; 
 }
 
 - (BOOL)shouldDimForAlwaysOn { 
-    return (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) ? YES : %orig; 
+    return (isAODMasterEnabled() && gCurrentState == AODStateActive) ? YES : %orig; 
 }
 
 - (BOOL)coverSheetIsObscured {
-    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) return NO;
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) return NO;
     return %orig;
 }
 
 - (long long)backlightLuminance {
-    if (isAODMasterEnabled()) {
-        if (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning) return 1;
-    }
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) return 1;
     return %orig;
+}
+
+// BẬT/TẮT STATUS BAR THEO ĐÚNG CHUẨN ENGINE CỦA APPLE (KHÔNG CAN THIỆP THỦ CÔNG GÂY MẤT THANH TRÊN)
+- (BOOL)shouldStatusBarBeHidden {
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        return YES; // Chỉ ẩn thanh trên khi đang ở AOD
+    }
+    return %orig; // Màn hình khóa bình thường vẫn hiển thị 100%
 }
 
 // HIỆU ỨNG ÉP VÀO LẶN SÁNG CHUẨN AOD GỐC APPLE (NHƯ VIDEO GIÂY 0:04 & 0:08)
@@ -834,63 +840,87 @@ static id gCachedFlipbookSpec = nil;
     }
 
     if (inactive) {
-        // Chu trình bấm khóa: Màn hình co nhẹ và lặn dịu sáng trong 0.45s
+        // Chống lặp kích hoạt lại khi đang ở AOD
+        if (gCurrentState == AODStateActive) return;
         gCurrentState = AODStateTransitioning;
+
+        // Chu trình bấm khóa: Màn hình co nhẹ 0.985 và lặn dịu sáng trong 0.45s
         [UIView animateWithDuration:0.45f delay:0.0f options:UIViewAnimationOptionCurveEaseInOut animations:^{
             self.view.transform = CGAffineTransformMakeScale(0.985f, 0.985f);
-            [self _animateView:self.view toWhitePointReduced:YES withDuration:0.45f withDispatchGroup:nil];
-            [self _updateWallpaperEffectView];
-            [self _updateDateTimeView];
-            [self _updateComplicationsContainerView];
-            [self _updateContent];
+            @try {
+                [self _animateView:self.view toWhitePointReduced:YES withDuration:0.45f withDispatchGroup:nil];
+                [self _updateWallpaperEffectView];
+                [self _updateDateTimeView];
+                [self _updateComplicationsContainerView];
+            } @catch (NSException *e) {}
         } completion:^(BOOL finished) {
             if (finished) {
                 gCurrentState = AODStateActive;
+                // Áp dụng ẩn phụ trợ an toàn, TUYỆT ĐỐI KHÔNG GỌI LẠI _updateContent
+                @try {
+                    UIViewController *homeAffordanceVC = [self valueForKey:@"_homeAffordanceViewController"];
+                    if (homeAffordanceVC) homeAffordanceVC.view.alpha = 0.0f;
+
+                    UIViewController *quickActionsVC = [self valueForKey:@"_quickActionsViewController"];
+                    if (quickActionsVC) quickActionsVC.view.alpha = 0.0f;
+                } @catch (NSException *e) {}
             }
         }];
     } else {
-        // Chu trình đánh thức: Bung sáng và nở nhẹ về 1.0
+        if (gCurrentState == AODStateIdle) return;
         gCurrentState = AODStateIdle;
+
+        // Chu trình đánh thức: Bung sáng và nở nhẹ về 1.0, khôi phục giao diện hoàn toàn
         [UIView animateWithDuration:0.35f delay:0.0f options:UIViewAnimationOptionCurveEaseOut animations:^{
             self.view.transform = CGAffineTransformIdentity;
-            [self _animateView:self.view toWhitePointReduced:NO withDuration:0.35f withDispatchGroup:nil];
-            [self _updateWallpaperEffectView];
-            [self _updateDateTimeView];
-            [self _updateComplicationsContainerView];
-            [self _updateContent];
+            @try {
+                [self _animateView:self.view toWhitePointReduced:NO withDuration:0.35f withDispatchGroup:nil];
+                [self _updateWallpaperEffectView];
+                [self _updateDateTimeView];
+                [self _updateComplicationsContainerView];
+
+                UIViewController *homeAffordanceVC = [self valueForKey:@"_homeAffordanceViewController"];
+                if (homeAffordanceVC) homeAffordanceVC.view.alpha = 1.0f;
+
+                UIViewController *quickActionsVC = [self valueForKey:@"_quickActionsViewController"];
+                if (quickActionsVC) quickActionsVC.view.alpha = 1.0f;
+            } @catch (NSException *e) {}
         } completion:nil];
     }
 }
 
-// ẨN TOÀN BỘ GIAO DIỆN PHỤ (HOME BAR, STATUS BAR, ĐÈN PIN, CAMERA), CHỈ GIỮ NGÀY, GIỜ, WIDGET, THÔNG BÁO
+// ẨN GIAO DIỆN PHỤ AN TOÀN - NGẮT HOÀN TOÀN ĐỆ QUY GÂY CRASH LOOP
 - (void)_updateContent {
     %orig;
 
-    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-        // 1. Dập tắt thanh Home Bar, Status Bar, Quick Actions
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
         @try {
             UIViewController *homeAffordanceVC = [self valueForKey:@"_homeAffordanceViewController"];
-            if (homeAffordanceVC) { homeAffordanceVC.view.hidden = YES; homeAffordanceVC.view.alpha = 0.0f; }
+            if (homeAffordanceVC && homeAffordanceVC.view.alpha != 0.0f) {
+                homeAffordanceVC.view.alpha = 0.0f;
+            }
 
             UIViewController *quickActionsVC = [self valueForKey:@"_quickActionsViewController"];
-            if (quickActionsVC) { quickActionsVC.view.hidden = YES; quickActionsVC.view.alpha = 0.0f; }
-
-            UIViewController *statusBarVC = [self valueForKey:@"_statusBarViewController"];
-            if (statusBarVC) { statusBarVC.view.hidden = YES; statusBarVC.view.alpha = 0.0f; }
-        } @catch (NSException *e) {}
-
-        // 2. Bảo toàn Ngày, Giờ, Widget và Thông báo hiển thị rõ ràng
-        @try {
-            UIViewController *dateVC = [self valueForKey:@"_dateViewController"];
-            if (dateVC) { dateVC.view.hidden = NO; dateVC.view.alpha = 1.0f; }
-
-            UIViewController *complicationVC = [self valueForKey:@"_complicationContainerViewController"];
-            if (complicationVC) { complicationVC.view.hidden = NO; complicationVC.view.alpha = 1.0f; }
+            if (quickActionsVC && quickActionsVC.view.alpha != 0.0f) {
+                quickActionsVC.view.alpha = 0.0f;
+            }
 
             UIViewController *combinedListVC = [self valueForKey:@"_combinedListViewController"];
             if (combinedListVC) {
                 combinedListVC.view.hidden = !isNotificationsEnabled();
                 combinedListVC.view.alpha = isNotificationsEnabled() ? 1.0f : 0.0f;
+            }
+        } @catch (NSException *e) {}
+    } else if (gCurrentState == AODStateIdle) {
+        @try {
+            UIViewController *homeAffordanceVC = [self valueForKey:@"_homeAffordanceViewController"];
+            if (homeAffordanceVC && homeAffordanceVC.view.alpha != 1.0f) {
+                homeAffordanceVC.view.alpha = 1.0f;
+            }
+
+            UIViewController *quickActionsVC = [self valueForKey:@"_quickActionsViewController"];
+            if (quickActionsVC && quickActionsVC.view.alpha != 1.0f) {
+                quickActionsVC.view.alpha = 1.0f;
             }
         } @catch (NSException *e) {}
     }
@@ -912,8 +942,8 @@ static id gCachedFlipbookSpec = nil;
     if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
         if (!isWallpaperEnabled()) {
             // TẮT HÌNH NỀN: ÉP ĐEN HOÀN TOÀN TẤT CẢ LỚP NỀN
-            if (floatingLayer) { floatingLayer.hidden = YES; floatingLayer.alpha = 0.0f; }
-            if (bgView) { bgView.hidden = YES; bgView.alpha = 0.0f; }
+            if (floatingLayer) floatingLayer.alpha = 0.0f;
+            if (bgView) bgView.alpha = 0.0f;
             if (effectView) {
                 effectView.hidden = NO;
                 effectView.backgroundColor = [UIColor blackColor];
@@ -922,8 +952,8 @@ static id gCachedFlipbookSpec = nil;
             self.view.backgroundColor = [UIColor blackColor];
         } else {
             // HIỆN HÌNH NỀN: ĐỒNG BỘ HIỆU ỨNG LÀM MỜ ẢNH NỀN
-            if (floatingLayer) { floatingLayer.hidden = NO; floatingLayer.alpha = 1.0f; }
-            if (bgView) { bgView.hidden = NO; bgView.alpha = 1.0f; }
+            if (floatingLayer) floatingLayer.alpha = 1.0f;
+            if (bgView) bgView.alpha = 1.0f;
             if (effectView) {
                 effectView.hidden = NO;
                 if (isBlurWallpaperEnabled()) {
@@ -937,9 +967,12 @@ static id gCachedFlipbookSpec = nil;
             self.view.backgroundColor = [UIColor clearColor];
         }
     } else {
-        if (floatingLayer) { floatingLayer.hidden = NO; floatingLayer.alpha = 1.0f; }
-        if (bgView) { bgView.hidden = NO; bgView.alpha = 1.0f; }
-        if (effectView) { effectView.backgroundColor = [UIColor clearColor]; effectView.alpha = 0.0f; }
+        if (floatingLayer) floatingLayer.alpha = 1.0f;
+        if (bgView) bgView.alpha = 1.0f;
+        if (effectView) {
+            effectView.backgroundColor = [UIColor clearColor];
+            effectView.alpha = 0.0f;
+        }
         self.view.backgroundColor = [UIColor clearColor];
         self.view.transform = CGAffineTransformIdentity;
     }
