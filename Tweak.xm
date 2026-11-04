@@ -1907,6 +1907,14 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
     loadAODPreferences();
 }
 
+// Bọc %init duy nhất 1 lần vào hàm này để Logos compiler không báo lỗi re-%init
+static void initGroupPreferencesOnce(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        %init(Group_Preferences);
+    });
+}
+
 %ctor {
     @autoreleasepool {
         NSString *processName = [[NSProcessInfo processInfo] processName];
@@ -1949,19 +1957,16 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
             dlopen("/System/Library/PrivateFrameworks/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW);
             dlopen("/System/Library/PrivateFrameworks/Settings/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW);
 
-            // Khởi tạo Group Preferences ngay khi class đã tồn tại trong runtime
+            // Kiểm tra và khởi tạo thông qua hàm trung gian, không gọi trực tiếp %init 2 lần
             if (objc_getClass("DBSMainDisplayPreferencesController")) {
-                %init(Group_Preferences);
+                initGroupPreferencesOnce();
             } else {
                 [[NSNotificationCenter defaultCenter] addObserverForName:NSBundleDidLoadNotification
                                                                   object:nil
                                                                    queue:[NSOperationQueue mainQueue]
                                                               usingBlock:^(NSNotification *note) {
                     if (objc_getClass("DBSMainDisplayPreferencesController")) {
-                        static dispatch_once_t onceToken;
-                        dispatch_once(&onceToken, ^{
-                            %init(Group_Preferences);
-                        });
+                        initGroupPreferencesOnce();
                     }
                 }];
             }
