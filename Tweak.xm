@@ -7,6 +7,7 @@
 #import <IOKit/ps/IOPSKeys.h>
 #import <dlfcn.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 #import <spawn.h>
 
 //==============================================================
@@ -164,17 +165,22 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 - (void)setValues:(NSArray *)values titles:(NSArray *)titles shortTitles:(NSArray *)shortTitles;
 @end
 
-@interface PSListController : UIViewController
+@interface PSListController : UIViewController {
+@public
+    NSMutableArray *_specifiers;
+}
 - (NSMutableArray *)specifiers;
 - (void)reloadSpecifiers;
 - (PSSpecifier *)specifierForID:(NSString *)specifierID;
 - (void)reloadSpecifier:(PSSpecifier *)specifier animated:(BOOL)animated;
 - (void)insertSpecifier:(PSSpecifier *)specifier atIndex:(NSInteger)index animated:(BOOL)animated;
 - (void)addSpecifier:(PSSpecifier *)specifier animated:(BOOL)animated;
+- (id)loadSpecifiersFromPlistName:(NSString *)name target:(id)target bundle:(NSBundle *)bundle;
 @end
 
 @interface DBSMainDisplayPreferencesController : PSListController
 - (NSMutableArray *)specifiers;
+- (id)getAODMasterStatusText:(PSSpecifier *)spec;
 @end
 
 @interface DBSAlwaysOnViewController : PSListController
@@ -184,6 +190,10 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 - (void)_updatesForSpecifiers:(id)arg1 isAlwaysOnEnabled:(BOOL)enabled animated:(BOOL)animated;
 - (id)isAlwaysOnEnabled:(PSSpecifier *)specifier;
 - (void)setAlwaysOnDisplayEnabled:(id)value specifier:(PSSpecifier *)specifier;
+- (void)setCustomHz:(id)value spec:(PSSpecifier *)spec;
+- (id)getCustomHz:(PSSpecifier *)spec;
+- (void)setCustomBrightness:(id)value spec:(PSSpecifier *)spec;
+- (id)getCustomBrightness:(PSSpecifier *)spec;
 @end
 
 @interface BLSHFlipbookSpecification : NSObject
@@ -368,7 +378,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 - (void)setDigitizerInTapToWakeMode:(BOOL)mode;
 - (void)setDigitizerModeRequiresHitTestSuppression:(BOOL)suppress;
 - (void)setTapToWakeGestureRecognizer:(UITapGestureRecognizer *)gesture;
-- (void)tapToWakeDidRecognize:(UITapGestureRecognizer *)arg1;
+- (void)tapToWakeDidRecognize:(UITapGestureRecognizer *)1;
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch;
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer;
 @end
@@ -1909,13 +1919,30 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
     loadAODPreferences();
 }
 
-// Bọc %init duy nhất 1 lần vào hàm này để Logos compiler không báo lỗi re-%init
 static void initGroupPreferencesOnce(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        %init(Group_Preferences);
+        Class dbsClass = objc_getClass("DBSMainDisplayPreferencesController");
+        Class aodClass = objc_getClass("DBSAlwaysOnViewController");
+        %init(Group_Preferences, 
+              DBSMainDisplayPreferencesController = dbsClass,
+              DBSAlwaysOnViewController = aodClass);
     });
 }
+
+// Hook đón đầu tại tầng PSListController để kích hoạt ngay khi trang hiển thị nạp
+%group Group_PreferencesLoader
+%hook PSListController
+- (void)viewDidLoad {
+    %orig;
+    if ([self isKindOfClass:objc_getClass("DBSMainDisplayPreferencesController")]) {
+        initGroupPreferencesOnce();
+        // Ép reload lại specifiers nếu lần đầu chưa kịp chèn
+        [self reloadSpecifiers];
+    }
+}
+%end
+%end
 
 %ctor {
     @autoreleasepool {
@@ -1943,10 +1970,9 @@ static void initGroupPreferencesOnce(void) {
         } else if ([processName isEqualToString:@"backboardd"]) {
             %init(Group_Backboardd);
         } else if ([bundleID isEqualToString:@"com.apple.Preferences"] || 
-                   [processName.lowercaseString containsString:@"preferences"] || 
-                   [bundleID.lowercaseString containsString:@"preferences"]) {
+                   [processName.lowercaseString containsString:@"preferences"]) {
             
-            // Hook MobileGestalt động runtime
+            // 1. Hook MobileGestalt động
             void *gestaltHandle = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_NOW);
             if (gestaltHandle) {
                 void *mgFunc = dlsym(gestaltHandle, "MGGetBoolAnswer");
@@ -1955,22 +1981,16 @@ static void initGroupPreferencesOnce(void) {
                 }
             }
 
-            // Ép dyld nạp binary thực tế của DisplayAndBrightnessSettings qua dlopen
-            dlopen("/System/Library/PrivateFrameworks/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW);
-            dlopen("/System/Library/PrivateFrameworks/Settings/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW);
+            // 2. Ép load các bundle liên quan đến Display của Preferences
+            [[NSBundle bundleWithPath:@"/System/Library/PreferenceBundles/Display.bundle"] load];
+            dlopen("/System/Library/PrivateFrameworks/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);
+            dlopen("/System/Library/PrivateFrameworks/Settings/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);
 
-            // Kiểm tra và khởi tạo thông qua hàm trung gian, không gọi trực tiếp %init 2 lần
+            // 3. Nếu class đã tồn tại trong runtime thì hook luôn, nếu chưa thì Group_PreferencesLoader sẽ đón đầu khi view nạp
             if (objc_getClass("DBSMainDisplayPreferencesController")) {
                 initGroupPreferencesOnce();
             } else {
-                [[NSNotificationCenter defaultCenter] addObserverForName:NSBundleDidLoadNotification
-                                                                  object:nil
-                                                                   queue:[NSOperationQueue mainQueue]
-                                                              usingBlock:^(NSNotification *note) {
-                    if (objc_getClass("DBSMainDisplayPreferencesController")) {
-                        initGroupPreferencesOnce();
-                    }
-                }];
+                %init(Group_PreferencesLoader);
             }
         }
     }
