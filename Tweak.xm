@@ -1777,7 +1777,7 @@ static id gCachedFlipbookSpec = nil;
     Boolean valid = false;
     Boolean masterVal = CFPreferencesGetAppBooleanValue(CFSTR("AlwaysOnDisplayEnabled"), CFSTR("com.apple.BacklightServices"), &valid);
     if (!valid) masterVal = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.apple.BacklightServices"), &valid);
-    if (!valid) masterVal = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.jb.aodreal"));
+    if (!valid) masterVal = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.jb.aodreal"), &valid);
     BOOL isMasterOn = valid ? (BOOL)masterVal : YES;
 
     // 2. Nếu công tắc chính bật, chèn thêm 2 thanh trượt phần cứng xuống cuối trang
@@ -1927,6 +1927,8 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
 
         // 3. Phân luồng nạp Hook - Mỗi %init chỉ xuất hiện duy nhất 1 lần trong toàn bộ mã nguồn
         if ([bundleID isEqualToString:@"com.apple.springboard"] || [processName isEqualToString:@"SpringBoard"]) {
+            gIsSpringBoardProcess = YES;
+            gCurrentState = AODStateIdle;
             %init(Group_SpringBoard);
         } else if ([bundleID isEqualToString:@"com.apple.PosterBoard"] || 
                    [processName.lowercaseString containsString:@"posterboard"]) {
