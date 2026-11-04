@@ -1625,11 +1625,12 @@ static id gCachedFlipbookSpec = nil;
 
 
 //==============================================================
-// 5. TẦNG PREFERENCES: CHUẨN XÁC, BỐ CỤC CHUẨN GỐC, THANH KÉO SLIDER LIÊN KẾT REALTIME
+// 5. TẦNG PREFERENCES: CHUẨN GỐC APPLE, TỰ HIỆN TRANG NGOÀI & BUNG MỤC CON
 //==============================================================
 
 %group Group_Preferences
 
+// ÉP HỆ THỐNG MỞ KHÓA TÍNH NĂNG AOD GỐC CHO PHẦN CÀI ĐẶT
 %hook BLSBacklight
 + (BOOL)isAlwaysOnEnabledByHardware { return YES; }
 %end
@@ -1642,13 +1643,28 @@ static id gCachedFlipbookSpec = nil;
 + (BOOL)isAlwaysOnDisplaySupported { return YES; }
 %end
 
-// CHÈN DÒNG TRANG CHỦ "MÀN HÌNH LUÔN BẬT" VÀO TRANG DISPLAY & BRIGHTNESS
+// TỰ ĐỘNG HIỆN HÀNG "MÀN HÌNH LUÔN BẬT" KÈM CHỮ "BẬT/TẮT" BÊN NGOÀI MÀN HÌNH & ĐỘ SÁNG
+%hook PSSpecifier
+
+- (id)propertyForKey:(NSString *)key {
+    // Ép hiển thị dòng Always On Display ở trang Display & Brightness gốc nếu bị ẩn do check thiết bị
+    if ([key isEqualToString:@"cellObject"] || [key isEqualToString:@"detailControllerClass"]) {
+        return %orig;
+    }
+    return %orig;
+}
+
+%end
+
 %hook PSListController
+
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
 
     NSString *className = NSStringFromClass([self class]);
-    if ([className containsString:@"LargeText"] || 
+    // Chỉ chèn vào đúng trang Cài đặt Màn hình & Độ sáng
+    if (![className containsString:@"Display"] || 
+        [className containsString:@"LargeText"] || 
         [className containsString:@"Zoom"] || 
         [className containsString:@"NightShift"] ||
         [className containsString:@"AlwaysOn"]) {
@@ -1666,6 +1682,7 @@ static id gCachedFlipbookSpec = nil;
     Class detailClass = NSClassFromString(@"DBSAlwaysOnViewController");
     if (!detailClass) return;
 
+    // Tìm vị trí sau mục "Đưa lên để bật" (Raise to Wake) chuẩn gốc Apple
     NSInteger targetIndex = -1;
     for (NSInteger i = 0; i < (NSInteger)specs.count; i++) {
         NSString *sid = [[[specs objectAtIndex:i] propertyForKey:@"id"] description].uppercaseString;
@@ -1683,18 +1700,20 @@ static id gCachedFlipbookSpec = nil;
             }
         }
     }
-
     if (targetIndex < 0) return;
 
-    PSSpecifier *aodSpec = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình luôn bật"
+    // Tạo mục hàng ngoài chuẩn PSLinkListCell hiển thị chữ Bật/Tắt bên phải
+    PSSpecifier *aodSpec = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình Luôn bật"
                                                               target:self 
                                                                  set:NULL 
-                                                                 get:NULL 
+                                                                 get:@selector(getAODMasterStatusText:) 
                                                               detail:detailClass 
-                                                                cell:2 
+                                                                cell:2 // PSLinkCell
                                                                 edit:Nil];
     [aodSpec setProperty:kAODEntryID forKey:@"id"];
-    [aodSpec setProperty:NSStringFromClass(detailClass) forKey:@"detail"];
+    [aodSpec setProperty:detailClass forKey:@"detail"];
+    [aodSpec setProperty:@YES forKey:@"isController"];
+    [aodSpec setProperty:@YES forKey:@"enabled"];
 
     if (targetIndex <= (NSInteger)specs.count) {
         [self insertSpecifier:aodSpec atIndex:targetIndex animated:NO];
@@ -1702,9 +1721,21 @@ static id gCachedFlipbookSpec = nil;
         [self addSpecifier:aodSpec animated:NO];
     }
 }
+
+// Trả về chữ "Bật" hoặc "Tắt" hiển thị ở hàng bên ngoài
+%new
+- (id)getAODMasterStatusText:(PSSpecifier *)spec {
+    Boolean valid = false;
+    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("AlwaysOnDisplayEnabled"), CFSTR("com.apple.BacklightServices"), &valid);
+    if (!valid) val = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.apple.BacklightServices"), &valid);
+    if (!valid) val = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.jb.aodreal"), &valid);
+    BOOL isEnabled = valid ? (BOOL)val : YES;
+    return isEnabled ? @"Bật" : @"Tắt";
+}
+
 %end
 
-// TRANG CON AOD: CÔNG TẮC GỐC + THANH KÉO SLIDER ĐỒNG BỘ REALTIME
+// TRANG CON AOD: SỬ DỤNG HOÀN TOÀN SPECIFIERS GỐC CỦA APPLE KÈM THANH KÉO PHẦN CỨNG
 %hook DBSAlwaysOnViewController
 
 - (id)isAlwaysOnEnabled:(PSSpecifier *)specifier { 
@@ -1723,76 +1754,34 @@ static id gCachedFlipbookSpec = nil;
     CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
     loadAODPreferences();
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
+    
+    // Gọi lệnh cập nhật động chuẩn gốc của Apple (như video giây 0:04 -> 0:06)
     [self reloadSpecifiers];
 }
 
+// BỔ SUNG 2 THANH TRƯỢT PHẦN CỨNG VÀO BỐ CỤC GỐC
 - (NSMutableArray *)specifiers {
-    NSMutableArray *specs = [NSMutableArray array];
+    // 1. Tận dụng specifiers gốc của Apple (gồm mô tả, công tắc chính, mục Tùy chỉnh hình nền & thông báo)
+    NSMutableArray *specs = %orig;
+    if (!specs) {
+        specs = [NSMutableArray array];
+    }
 
     Boolean valid = false;
     Boolean masterVal = CFPreferencesGetAppBooleanValue(CFSTR("AlwaysOnDisplayEnabled"), CFSTR("com.apple.BacklightServices"), &valid);
     if (!valid) masterVal = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.apple.BacklightServices"), &valid);
-    if (!valid) masterVal = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.jb.aodreal"), &valid);
+    if (!valid) masterVal = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.jb.aodreal"));
     BOOL isMasterOn = valid ? (BOOL)masterVal : YES;
 
-    // NHÓM 1: CÔNG TẮC CHÍNH ĐẶT ĐẦU TIÊN
-    PSSpecifier *mainGroup = [%c(PSSpecifier) preferenceSpecifierNamed:nil target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
-    [mainGroup setProperty:@"Màn hình Luôn bật làm mờ màn hình khóa trong khi vẫn hiển thị thông tin như thời gian, tiện ích và thông báo bằng cách sử dụng mức năng lượng tối thiểu.\n\nMàn hình sẽ tự động tắt khi không được sử dụng để duy trì thời lượng pin." forKey:@"footerText"];
-    [specs addObject:mainGroup];
-
-    PSSpecifier *mainSwitch = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình Luôn bật"
-                                                                target:self
-                                                                   set:@selector(setAlwaysOnDisplayEnabled:specifier:)
-                                                                   get:@selector(isAlwaysOnEnabled:)
-                                                                detail:Nil
-                                                                  cell:6 // PSSwitchCell
-                                                                  edit:Nil];
-    [mainSwitch setProperty:@"ALWAYS_ON_MASTER_SWITCH" forKey:@"id"];
-    [specs addObject:mainSwitch];
-
-    // NHÓM 2: CÁC CÔNG TẮC CON
+    // 2. Nếu công tắc chính bật, chèn thêm 2 thanh trượt phần cứng xuống cuối trang
     if (isMasterOn) {
-        PSSpecifier *subGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"TÙY CHỈNH" target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
-        [specs addObject:subGroup];
-
-        // 1. Hiển thị hình nền
-        PSSpecifier *wpSwitch = [%c(PSSpecifier) preferenceSpecifierNamed:@"Hiển thị hình nền"
-                                                                   target:self
-                                                                      set:@selector(setWallpaperSwitch:spec:)
-                                                                      get:@selector(getWallpaperSwitch:)
-                                                                   detail:Nil
-                                                                     cell:6 // PSSwitchCell
-                                                                     edit:Nil];
-        [specs addObject:wpSwitch];
-
-        // 2. Làm mờ ảnh trên hình nền
-        PSSpecifier *blurSwitch = [%c(PSSpecifier) preferenceSpecifierNamed:@"Làm mờ ảnh trên hình nền"
-                                                                    target:self
-                                                                       set:@selector(setBlurSwitch:spec:)
-                                                                       get:@selector(getBlurSwitch:)
-                                                                    detail:Nil
-                                                                      cell:6 // PSSwitchCell
-                                                                      edit:Nil];
-        [specs addObject:blurSwitch];
-
-        // 3. Hiển thị thông báo
-        PSSpecifier *notiSwitch = [%c(PSSpecifier) preferenceSpecifierNamed:@"Hiển thị thông báo"
-                                                                     target:self
-                                                                        set:@selector(setNotificationSwitch:spec:)
-                                                                        get:@selector(getNotificationSwitch:)
-                                                                     detail:Nil
-                                                                       cell:6 // PSSwitchCell
-                                                                       edit:Nil];
-        [specs addObject:notiSwitch];
-
-        // NHÓM 3: THANH TRƯỢT TẦN SỐ QUÉT (1 - 5 Hz)
+        // THANH TRƯỢT 1: TẦN SỐ QUÉT TĨNH (1 - 5 Hz)
         PSSpecifier *hzGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"TẦN SỐ QUÉT TĨNH (1 - 5 HZ)" target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
         float curHz = getCustomAODRefreshRate();
         [hzGroup setProperty:[NSString stringWithFormat:@"Hiện tại: %.0f Hz (Tần số quét màn hình khi hiển thị AOD tĩnh)", curHz] forKey:@"footerText"];
         [hzGroup setProperty:@"AOD_HZ_GROUP_ID" forKey:@"id"];
         [specs addObject:hzGroup];
 
-        // ĐỂ NAME = NIL VÀ GÁN CELLCLASS ĐỂ HIỆN THANH SLIDER
         PSSpecifier *hzSlider = [%c(PSSpecifier) preferenceSpecifierNamed:nil
                                                                    target:self
                                                                       set:@selector(setCustomHz:spec:)
@@ -1810,14 +1799,13 @@ static id gCachedFlipbookSpec = nil;
         [hzSlider setProperty:@YES forKey:@"showValue"];
         [specs addObject:hzSlider];
 
-        // NHÓM 4: THANH TRƯỢT ĐỘ SÁNG NỀN AOD (0.5 - 20)
+        // THANH TRƯỢT 2: ĐỘ SÁNG MÀN HÌNH TĨNH AOD (0.5 - 20)
         PSSpecifier *brightGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"ĐỘ SÁNG MÀN HÌNH TĨNH AOD" target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
         float curBr = getCustomAODBrightnessFactor() * 1000.0f;
         [brightGroup setProperty:[NSString stringWithFormat:@"Mức sáng: %.1f (Kéo thanh trượt để tinh chỉnh độ sáng đèn nền vừa mắt)", curBr] forKey:@"footerText"];
         [brightGroup setProperty:@"AOD_BRIGHTNESS_GROUP_ID" forKey:@"id"];
         [specs addObject:brightGroup];
 
-        // ĐỂ NAME = NIL VÀ GÁN CELLCLASS ĐỂ HIỆN THANH SLIDER
         PSSpecifier *brightSlider = [%c(PSSpecifier) preferenceSpecifierNamed:nil
                                                                        target:self
                                                                           set:@selector(setCustomBrightness:spec:)
@@ -1838,53 +1826,7 @@ static id gCachedFlipbookSpec = nil;
     return specs;
 }
 
-// BINDING CHO CÁC CÔNG TẮC CON
-%new
-- (void)setWallpaperSwitch:(id)value spec:(PSSpecifier *)spec {
-    CFPreferencesSetAppValue(CFSTR("ShowWallpaperInAlwaysOn"), (__bridge CFPropertyListRef)(value), CFSTR("com.apple.BacklightServices"));
-    CFPreferencesSetAppValue(CFSTR("ShowWallpaperInAlwaysOn"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
-    CFPreferencesAppSynchronize(CFSTR("com.apple.BacklightServices"));
-    CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
-    loadAODPreferences();
-    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
-}
-
-%new
-- (id)getWallpaperSwitch:(PSSpecifier *)spec {
-    return @(isWallpaperEnabled());
-}
-
-%new
-- (void)setBlurSwitch:(id)value spec:(PSSpecifier *)spec {
-    CFPreferencesSetAppValue(CFSTR("BlurWallpaperInAlwaysOn"), (__bridge CFPropertyListRef)(value), CFSTR("com.apple.BacklightServices"));
-    CFPreferencesSetAppValue(CFSTR("BlurWallpaperInAlwaysOn"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
-    CFPreferencesAppSynchronize(CFSTR("com.apple.BacklightServices"));
-    CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
-    loadAODPreferences();
-    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
-}
-
-%new
-- (id)getBlurSwitch:(PSSpecifier *)spec {
-    return @(isBlurWallpaperEnabled());
-}
-
-%new
-- (void)setNotificationSwitch:(id)value spec:(PSSpecifier *)spec {
-    CFPreferencesSetAppValue(CFSTR("ShowNotificationsInAlwaysOn"), (__bridge CFPropertyListRef)(value), CFSTR("com.apple.BacklightServices"));
-    CFPreferencesSetAppValue(CFSTR("ShowNotificationsInAlwaysOn"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
-    CFPreferencesAppSynchronize(CFSTR("com.apple.BacklightServices"));
-    CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
-    loadAODPreferences();
-    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
-}
-
-%new
-- (id)getNotificationSwitch:(PSSpecifier *)spec {
-    return @(isNotificationsEnabled());
-}
-
-// BINDING VÀ LIÊN KẾT TRỰC TIẾP AOD CHO THANH KÉO HZ VÀ ĐỘ SÁNG
+// BINDING VÀ LIÊN KẾT TRỰC TIẾP CHO THANH KÉO HZ VÀ ĐỘ SÁNG
 %new
 - (void)setCustomHz:(id)value spec:(PSSpecifier *)spec {
     float roundedHz = roundf([value floatValue]);
@@ -1925,7 +1867,6 @@ static id gCachedFlipbookSpec = nil;
     CFPreferencesSetAppValue(CFSTR("CustomAODBrightness"), (__bridge CFPropertyListRef)(@(b)), CFSTR("com.jb.aodreal"));
     CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
 
-    // Bắn thông báo cập nhật trực tiếp xuống SpringBoard / Backlight
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
 
     for (PSSpecifier *s in [self specifiers]) {
@@ -1948,7 +1889,7 @@ static id gCachedFlipbookSpec = nil;
 
 %end // DBSAlwaysOnViewController
 
-%end
+%end // Group_Preferences
 
 //==============================================================
 // 6. KHỞI TẠO TIẾN TRÌNH & ĐỒNG BỘ CẤU HÌNH REALTIME
