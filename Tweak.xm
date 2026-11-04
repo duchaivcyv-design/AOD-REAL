@@ -172,6 +172,13 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 - (void)addSpecifier:(PSSpecifier *)specifier animated:(BOOL)animated;
 @end
 
+@interface DBSDisplayAndBrightnessSettingsController : PSListController
+- (BOOL)_deviceSupportsAlwaysOn;
+- (BOOL)deviceSupportsAlwaysOn;
+- (BOOL)supportsAlwaysOnDisplay;
+- (BOOL)shouldShowAlwaysOn;
+@end
+
 @interface DBSAlwaysOnViewController : PSListController
 - (PSSpecifier *)_alwaysOnDisplaySpecifier;
 - (PSSpecifier *)_showWallpaperSpecifier;
@@ -1650,94 +1657,23 @@ static id gCachedFlipbookSpec = nil;
 + (BOOL)isAlwaysOnDisplaySupported { return YES; }
 %end
 
-// TỰ ĐỘNG HIỆN HÀNG "MÀN HÌNH LUÔN BẬT" KÈM CHỮ "BẬT/TẮT" BÊN NGOÀI MÀN HÌNH & ĐỘ SÁNG
-%hook PSSpecifier
+// HOOK GỐC VÀO TRANG MÀN HÌNH & ĐỘ SÁNG CỦA APPLE (KHÔNG CẦN CHÈN TAY BẰNG INSERT)
+%hook DBSDisplayAndBrightnessSettingsController
 
-- (id)propertyForKey:(NSString *)key {
-    // Ép hiển thị dòng Always On Display ở trang Display & Brightness gốc nếu bị ẩn do check thiết bị
-    if ([key isEqualToString:@"cellObject"] || [key isEqualToString:@"detailControllerClass"]) {
-        return %orig;
-    }
-    return %orig;
+- (BOOL)_deviceSupportsAlwaysOn {
+    return YES;
 }
 
-%end
-
-%hook PSListController
-
-- (void)viewWillAppear:(BOOL)animated {
-    %orig;
-
-    NSString *className = NSStringFromClass([self class]);
-    // Chỉ chèn vào đúng trang Cài đặt Màn hình & Độ sáng
-    if (![className containsString:@"Display"] || 
-        [className containsString:@"LargeText"] || 
-        [className containsString:@"Zoom"] || 
-        [className containsString:@"NightShift"] ||
-        [className containsString:@"AlwaysOn"]) {
-        return;
-    }
-
-    NSMutableArray *specs = [self specifiers];
-    if (!specs || specs.count == 0) return;
-
-    static NSString *const kAODEntryID = @"ALWAYS_ON_DISPLAY_ENTRY_ROW";
-    for (PSSpecifier *s in specs) {
-        if ([[s propertyForKey:@"id"] isEqualToString:kAODEntryID]) return;
-    }
-
-    Class detailClass = NSClassFromString(@"DBSAlwaysOnViewController");
-    if (!detailClass) return;
-
-    // Tìm vị trí sau mục "Đưa lên để bật" (Raise to Wake) chuẩn gốc Apple
-    NSInteger targetIndex = -1;
-    for (NSInteger i = 0; i < (NSInteger)specs.count; i++) {
-        NSString *sid = [[[specs objectAtIndex:i] propertyForKey:@"id"] description].uppercaseString;
-        if ([sid containsString:@"RAISE_TO_WAKE"] || [sid containsString:@"WAKE"]) {
-            targetIndex = i + 1;
-            break;
-        }
-    }
-    if (targetIndex < 0) {
-        for (NSInteger i = 0; i < (NSInteger)specs.count; i++) {
-            NSString *sid = [[[specs objectAtIndex:i] propertyForKey:@"id"] description].uppercaseString;
-            if ([sid containsString:@"AUTOLOCK"] || [sid containsString:@"AUTO_LOCK"]) {
-                targetIndex = i + 1;
-                break;
-            }
-        }
-    }
-    if (targetIndex < 0) return;
-
-    // Tạo mục hàng ngoài chuẩn PSLinkListCell hiển thị chữ Bật/Tắt bên phải
-    PSSpecifier *aodSpec = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình Luôn bật"
-                                                              target:self 
-                                                                 set:NULL 
-                                                                 get:@selector(getAODMasterStatusText:) 
-                                                              detail:detailClass 
-                                                                cell:2 // PSLinkCell
-                                                                edit:Nil];
-    [aodSpec setProperty:kAODEntryID forKey:@"id"];
-    [aodSpec setProperty:detailClass forKey:@"detail"];
-    [aodSpec setProperty:@YES forKey:@"isController"];
-    [aodSpec setProperty:@YES forKey:@"enabled"];
-
-    if (targetIndex <= (NSInteger)specs.count) {
-        [self insertSpecifier:aodSpec atIndex:targetIndex animated:NO];
-    } else {
-        [self addSpecifier:aodSpec animated:NO];
-    }
+- (BOOL)deviceSupportsAlwaysOn {
+    return YES;
 }
 
-// Trả về chữ "Bật" hoặc "Tắt" hiển thị ở hàng bên ngoài
-%new
-- (id)getAODMasterStatusText:(PSSpecifier *)spec {
-    Boolean valid = false;
-    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("AlwaysOnDisplayEnabled"), CFSTR("com.apple.BacklightServices"), &valid);
-    if (!valid) val = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.apple.BacklightServices"), &valid);
-    if (!valid) val = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.jb.aodreal"), &valid);
-    BOOL isEnabled = valid ? (BOOL)val : YES;
-    return isEnabled ? @"Bật" : @"Tắt";
+- (BOOL)supportsAlwaysOnDisplay {
+    return YES;
+}
+
+- (BOOL)shouldShowAlwaysOn {
+    return YES;
 }
 
 %end
@@ -1762,13 +1698,11 @@ static id gCachedFlipbookSpec = nil;
     loadAODPreferences();
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
     
-    // Gọi lệnh cập nhật động chuẩn gốc của Apple (như video giây 0:04 -> 0:06)
     [self reloadSpecifiers];
 }
 
 // BỔ SUNG 2 THANH TRƯỢT PHẦN CỨNG VÀO BỐ CỤC GỐC
 - (NSMutableArray *)specifiers {
-    // 1. Tận dụng specifiers gốc của Apple (gồm mô tả, công tắc chính, mục Tùy chỉnh hình nền & thông báo)
     NSMutableArray *specs = %orig;
     if (!specs) {
         specs = [NSMutableArray array];
@@ -1780,7 +1714,6 @@ static id gCachedFlipbookSpec = nil;
     if (!valid) masterVal = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.jb.aodreal"), &valid);
     BOOL isMasterOn = valid ? (BOOL)masterVal : YES;
 
-    // 2. Nếu công tắc chính bật, chèn thêm 2 thanh trượt phần cứng xuống cuối trang
     if (isMasterOn) {
         // THANH TRƯỢT 1: TẦN SỐ QUÉT TĨNH (1 - 5 Hz)
         PSSpecifier *hzGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"TẦN SỐ QUÉT TĨNH (1 - 5 HZ)" target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
@@ -1833,7 +1766,6 @@ static id gCachedFlipbookSpec = nil;
     return specs;
 }
 
-// BINDING VÀ LIÊN KẾT TRỰC TIẾP CHO THANH KÉO HZ VÀ ĐỘ SÁNG
 %new
 - (void)setCustomHz:(id)value spec:(PSSpecifier *)spec {
     float roundedHz = roundf([value floatValue]);
