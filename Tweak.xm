@@ -1680,7 +1680,6 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 %hook DBSMainDisplayPreferencesController
 
 - (NSMutableArray *)specifiers {
-    // 1. Phải mutableCopy để mảng có thể insert/add mà không bị crash ngầm
     NSArray *origSpecs = %orig;
     NSMutableArray *specs = origSpecs ? [origSpecs mutableCopy] : [NSMutableArray array];
 
@@ -1737,7 +1736,6 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
         }
     }
 
-    // 2. Gán ngược lại vào ivar cache của PSListController
     [self setValue:specs forKey:@"_specifiers"];
     return specs;
 }
@@ -1782,10 +1780,8 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 }
 
 - (NSMutableArray *)specifiers {
-    NSMutableArray *specs = %orig;
-    if (!specs) {
-        specs = [NSMutableArray array];
-    }
+    NSArray *origSpecs = %orig;
+    NSMutableArray *specs = origSpecs ? [origSpecs mutableCopy] : [NSMutableArray array];
 
     Boolean valid = false;
     Boolean masterVal = CFPreferencesGetAppBooleanValue(CFSTR("AlwaysOnDisplayEnabled"), CFSTR("com.apple.BacklightServices"), &valid);
@@ -1917,9 +1913,13 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
     loadAODPreferences();
 }
 
-static void initGroupPreferencesOnce(void) {
+static void initGroupPreferencesExplicitly(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
+        dlopen("/System/Library/PreferenceBundles/Display.bundle/Display", RTLD_NOW | RTLD_GLOBAL);
+        dlopen("/System/Library/PrivateFrameworks/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);
+        dlopen("/System/Library/PrivateFrameworks/Settings/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);
+
         Class dbsClass = objc_getClass("DBSMainDisplayPreferencesController");
         Class aodClass = objc_getClass("DBSAlwaysOnViewController");
         %init(Group_Preferences, 
@@ -1934,8 +1934,7 @@ static void initGroupPreferencesOnce(void) {
 - (void)viewDidLoad {
     %orig;
     if ([self isKindOfClass:objc_getClass("DBSMainDisplayPreferencesController")]) {
-        initGroupPreferencesOnce();
-        // Ép reload lại specifiers nếu lần đầu chưa kịp chèn
+        initGroupPreferencesExplicitly();
         [self reloadSpecifiers];
     }
 }
@@ -1981,12 +1980,13 @@ static void initGroupPreferencesOnce(void) {
 
             // 2. Ép load các bundle liên quan đến Display của Preferences
             [[NSBundle bundleWithPath:@"/System/Library/PreferenceBundles/Display.bundle"] load];
+            dlopen("/System/Library/PreferenceBundles/Display.bundle/Display", RTLD_NOW | RTLD_GLOBAL);
             dlopen("/System/Library/PrivateFrameworks/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);
             dlopen("/System/Library/PrivateFrameworks/Settings/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);
 
-            // 3. Nếu class đã tồn tại trong runtime thì hook luôn, nếu chưa thì Group_PreferencesLoader sẽ đón đầu khi view nạp
+            // 3. Khởi tạo hook trực tiếp nếu class đã có, hoặc dùng loader đón đầu khi view load
             if (objc_getClass("DBSMainDisplayPreferencesController")) {
-                initGroupPreferencesOnce();
+                initGroupPreferencesExplicitly();
             } else {
                 %init(Group_PreferencesLoader);
             }
