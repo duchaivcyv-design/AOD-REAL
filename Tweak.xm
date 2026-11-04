@@ -94,8 +94,6 @@ static inline void loadAODPreferences(void) {
 
 // CÁC HÀM GETTER TỐC ĐỘ CAO CHO TOÀN BỘ TWEAK
 static inline BOOL isAODMasterEnabled(void) { 
-    // CHỈ chặn khi ĐANG Ở TRONG TIẾN TRÌNH SPRINGBOARD mà SpringBoard chưa boot xong
-    // Khi ở Preferences hay backboardd, phải trả thẳng gCachedAODEnabled!
     if (gIsSpringBoardProcess && !gSpringBoardDidFinishLaunching) return NO;
     return gCachedAODEnabled; 
 }
@@ -378,7 +376,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 - (void)setDigitizerInTapToWakeMode:(BOOL)mode;
 - (void)setDigitizerModeRequiresHitTestSuppression:(BOOL)suppress;
 - (void)setTapToWakeGestureRecognizer:(UITapGestureRecognizer *)gesture;
-- (void)tapToWakeDidRecognize:(UITapGestureRecognizer *)1;
+- (void)tapToWakeDidRecognize:(UITapGestureRecognizer *)gesture;
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch;
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer;
 @end
