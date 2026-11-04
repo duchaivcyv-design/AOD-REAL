@@ -24,8 +24,9 @@ static CGFloat gCurrentAODProgress = 1.0f;
 static NSInteger gBurnInShiftStep = 0;
 static id gInjectedSessionProvider = nil;
 
-// CỜ BẢO VỆ KHỞI ĐỘNG: CHẶN AOD CAN THIỆP KHI SPRINGBOARD ĐANG RESPRING/BOOT
+// CỜ BẢO VỆ KHỞI ĐỘNG CHỈ DÀNH RIÊNG CHO SPRINGBOARD
 static BOOL gSpringBoardDidFinishLaunching = NO;
+static BOOL gIsSpringBoardProcess = NO;
 
 // Biến lưu cấu hình tải nhanh trong bộ nhớ RAM
 static BOOL gCachedAODEnabled = YES;
@@ -70,6 +71,8 @@ static inline void loadAODPreferences(void) {
             if (r >= 1.0f && r <= 5.0f) gCachedCustomHz = r;
         }
         CFRelease(hzVal);
+    } else {
+        gCachedCustomHz = 1.0f;
     }
 
     // 6. Nấc độ sáng panel tĩnh
@@ -82,15 +85,19 @@ static inline void loadAODPreferences(void) {
             }
         }
         CFRelease(brVal);
+    } else {
+        gCachedBrightnessFactor = 0.005f;
     }
 }
 
 // CÁC HÀM GETTER TỐC ĐỘ CAO CHO TOÀN BỘ TWEAK
 static inline BOOL isAODMasterEnabled(void) { 
-    // Chặn AOD hoạt động khi SpringBoard chưa hoàn tất nạp UI ban đầu (chống deadlock màn đen)
-    if (!gSpringBoardDidFinishLaunching) return NO;
+    // CHỈ chặn khi ĐANG Ở TRONG TIẾN TRÌNH SPRINGBOARD mà SpringBoard chưa boot xong
+    // Khi ở Preferences hay backboardd, phải trả thẳng gCachedAODEnabled!
+    if (gIsSpringBoardProcess && !gSpringBoardDidFinishLaunching) return NO;
     return gCachedAODEnabled; 
 }
+
 static inline BOOL isWallpaperEnabled(void) { return gCachedWallpaperEnabled; }
 static inline BOOL isBlurWallpaperEnabled(void) { return gCachedBlurWallpaperEnabled; }
 static inline BOOL isNotificationsEnabled(void) { return gCachedNotificationsEnabled; }
