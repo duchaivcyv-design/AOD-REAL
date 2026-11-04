@@ -1790,19 +1790,21 @@ static id gCachedFlipbookSpec = nil;
         [hzGroup setProperty:@"AOD_HZ_GROUP_ID" forKey:@"id"];
         [specs addObject:hzGroup];
 
-        PSSpecifier *hzSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Tần số quét"
+        // ĐỂ NAME = NIL VÀ GÁN CELLCLASS ĐỂ HIỆN THANH SLIDER
+        PSSpecifier *hzSlider = [%c(PSSpecifier) preferenceSpecifierNamed:nil
                                                                    target:self
                                                                       set:@selector(setCustomHz:spec:)
                                                                       get:@selector(getCustomHz:)
                                                                    detail:Nil
-                                                                     cell:5 // PSSliderCell (Thanh kéo)
+                                                                     cell:5 // PSSliderCell
                                                                      edit:Nil];
+        [hzSlider setProperty:@"PSSliderTableCell" forKey:@"cellClass"];
         [hzSlider setProperty:@"CustomAODRefreshRate" forKey:@"key"];
         [hzSlider setProperty:@"AOD_CUSTOM_HZ_KEY" forKey:@"id"];
         [hzSlider setProperty:@1.0f forKey:@"min"];
         [hzSlider setProperty:@5.0f forKey:@"max"];
         [hzSlider setProperty:@YES forKey:@"isSegmented"];
-        [hzSlider setProperty:@4 forKey:@"segmentCount"]; // 4 đoạn chia đều: 1, 2, 3, 4, 5 Hz
+        [hzSlider setProperty:@4 forKey:@"segmentCount"];
         [hzSlider setProperty:@YES forKey:@"showValue"];
         [specs addObject:hzSlider];
 
@@ -1813,13 +1815,15 @@ static id gCachedFlipbookSpec = nil;
         [brightGroup setProperty:@"AOD_BRIGHTNESS_GROUP_ID" forKey:@"id"];
         [specs addObject:brightGroup];
 
-        PSSpecifier *brightSlider = [%c(PSSpecifier) preferenceSpecifierNamed:@"Độ sáng panel"
+        // ĐỂ NAME = NIL VÀ GÁN CELLCLASS ĐỂ HIỆN THANH SLIDER
+        PSSpecifier *brightSlider = [%c(PSSpecifier) preferenceSpecifierNamed:nil
                                                                        target:self
                                                                           set:@selector(setCustomBrightness:spec:)
                                                                           get:@selector(getCustomBrightness:)
                                                                        detail:Nil
-                                                                         cell:5 // PSSliderCell (Thanh kéo)
+                                                                         cell:5 // PSSliderCell
                                                                          edit:Nil];
+        [brightSlider setProperty:@"PSSliderTableCell" forKey:@"cellClass"];
         [brightSlider setProperty:@"CustomAODBrightness" forKey:@"key"];
         [brightSlider setProperty:@"AOD_CUSTOM_BRIGHTNESS_KEY" forKey:@"id"];
         [brightSlider setProperty:@0.5f forKey:@"min"];
@@ -1878,21 +1882,19 @@ static id gCachedFlipbookSpec = nil;
     return @(isNotificationsEnabled());
 }
 
-// BINDING VÀ LIÊN KẾT REALTIME CHO THANH KÉO HZ VÀ ĐỘ SÁNG
+// BINDING VÀ LIÊN KẾT TRỰC TIẾP AOD CHO THANH KÉO HZ VÀ ĐỘ SÁNG
 %new
 - (void)setCustomHz:(id)value spec:(PSSpecifier *)spec {
     float roundedHz = roundf([value floatValue]);
     if (roundedHz < 1.0f) roundedHz = 1.0f;
     if (roundedHz > 5.0f) roundedHz = 5.0f;
 
+    gCachedCustomHz = roundedHz;
     CFPreferencesSetAppValue(CFSTR("CustomAODRefreshRate"), (__bridge CFPropertyListRef)(@(roundedHz)), CFSTR("com.jb.aodreal"));
     CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
-    loadAODPreferences();
 
-    // Bắn thông báo cập nhật ngay lập tức xuống backboardd & SpringBoard
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
 
-    // Cập nhật nhãn footer tức thời
     PSSpecifier *hzGroup = [self specifierForID:@"AOD_HZ_GROUP_ID"];
     if (hzGroup) {
         [hzGroup setProperty:[NSString stringWithFormat:@"Hiện tại: %.0f Hz (Tần số quét màn hình khi hiển thị AOD tĩnh)", roundedHz] forKey:@"footerText"];
@@ -1911,14 +1913,13 @@ static id gCachedFlipbookSpec = nil;
     if (b < 0.5f) b = 0.5f;
     if (b > 20.0f) b = 20.0f;
 
+    gCachedBrightnessFactor = b / 1000.0f;
     CFPreferencesSetAppValue(CFSTR("CustomAODBrightness"), (__bridge CFPropertyListRef)(@(b)), CFSTR("com.jb.aodreal"));
     CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
-    loadAODPreferences();
 
-    // Bắn thông báo cập nhật trực tiếp xuống Backlight Controller
+    // Bắn thông báo cập nhật trực tiếp xuống SpringBoard / Backlight
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
 
-    // Cập nhật nhãn footer tức thời
     PSSpecifier *brGroup = [self specifierForID:@"AOD_BRIGHTNESS_GROUP_ID"];
     if (brGroup) {
         [brGroup setProperty:[NSString stringWithFormat:@"Mức sáng: %.1f (Kéo thanh trượt để tinh chỉnh độ sáng đèn nền vừa mắt)", b] forKey:@"footerText"];
@@ -1933,7 +1934,7 @@ static id gCachedFlipbookSpec = nil;
 
 %end // DBSAlwaysOnViewController
 
-%end // Group_Preferences
+%end
 
 //==============================================================
 // 6. KHỞI TẠO TIẾN TRÌNH & ĐỒNG BỘ CẤU HÌNH REALTIME
