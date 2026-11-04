@@ -840,6 +840,9 @@ static id gCachedFlipbookSpec = nil;
                 gCurrentState = AODStateActive;
                 // KHI ĐÃ VÀO AOD TĨNH HOÀN TOÀN MỚI CHO PHÉP ẨN THANH TRÊN VÀ CÁC NÚT PHỤ
                 @try {
+                    if ([self respondsToSelector:@selector(_setStatusBarHidden:forReason:)]) {
+                        [self performSelector:@selector(_setStatusBarHidden:forReason:) withObject:@(YES) withObject:@"AODReal"];
+                    }
                     UIViewController *statusBarVC = [self valueForKey:@"_statusBarViewController"];
                     if (statusBarVC) statusBarVC.view.alpha = 0.0f;
 
@@ -857,6 +860,9 @@ static id gCachedFlipbookSpec = nil;
 
         // ĐÁNH THỨC MÀN HÌNH KHÓA: HIỂN THỊ LẠI TOÀN BỘ THANH TRÊN VÀ NÚT BẤM NGAY LẬP TỨC
         @try {
+            if ([self respondsToSelector:@selector(_setStatusBarHidden:forReason:)]) {
+                [self performSelector:@selector(_setStatusBarHidden:forReason:) withObject:@(NO) withObject:@"AODReal"];
+            }
             UIViewController *statusBarVC = [self valueForKey:@"_statusBarViewController"];
             if (statusBarVC) statusBarVC.view.alpha = 1.0f;
 
@@ -968,6 +974,9 @@ static id gCachedFlipbookSpec = nil;
         
         // Đảm bảo khi rời màn hình khóa, thanh trạng thái luôn hiển thị
         @try {
+            if ([self respondsToSelector:@selector(_setStatusBarHidden:forReason:)]) {
+                [self performSelector:@selector(_setStatusBarHidden:forReason:) withObject:@(NO) withObject:@"AODReal"];
+            }
             UIViewController *statusBarVC = [self valueForKey:@"_statusBarViewController"];
             if (statusBarVC) statusBarVC.view.alpha = 1.0f;
         } @catch (NSException *e) {}
@@ -1198,19 +1207,12 @@ static id gCachedFlipbookSpec = nil;
         if (gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) {
             gCurrentState = AODStateTransitioning;
             
-            // Kích hoạt chu trình chuyển cảnh mềm gốc của CoverSheet (Lặn sáng 0.45s)
+            // Kích hoạt chu trình chuyển cảnh mềm gốc của CoverSheet (Lặn sáng 0.45s) trên main thread
             if (gCoverSheetVC && [gCoverSheetVC respondsToSelector:@selector(_updateAppearanceForAODTransitionToInactive:)]) {
-                [gCoverSheetVC _updateAppearanceForAODTransitionToInactive:YES];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [gCoverSheetVC _updateAppearanceForAODTransitionToInactive:YES];
+                });
             }
-            
-            [UIView animateWithDuration:0.45f delay:0.0f options:UIViewAnimationOptionCurveEaseInOut animations:^{
-                gCurrentAODProgress = 0.0f;
-                if (gCoverSheetVC) [gCoverSheetVC _updateWallpaperEffectView];
-            } completion:^(BOOL finished) {
-                if (finished) {
-                    gCurrentState = AODStateActive;
-                }
-            }];
             
             state = 2; // Giữ State AOD của BacklightServices
         }
@@ -1218,7 +1220,9 @@ static id gCachedFlipbookSpec = nil;
         gCurrentState = AODStateIdle;
         gCurrentAODProgress = 1.0f;
         if (gCoverSheetVC && [gCoverSheetVC respondsToSelector:@selector(_updateAppearanceForAODTransitionToInactive:)]) {
-            [gCoverSheetVC _updateAppearanceForAODTransitionToInactive:NO];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [gCoverSheetVC _updateAppearanceForAODTransitionToInactive:NO];
+            });
         }
     }
     %orig(state, source, YES, completion);
