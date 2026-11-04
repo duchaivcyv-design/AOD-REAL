@@ -5,6 +5,7 @@
 #import <IOKit/IOKitLib.h>
 #import <IOKit/ps/IOPowerSources.h>
 #import <IOKit/ps/IOPSKeys.h>
+#import <dlfcn.h>
 #import <objc/runtime.h>
 #import <spawn.h>
 
@@ -1642,12 +1643,9 @@ static id gCachedFlipbookSpec = nil;
 // 5. TẦNG PREFERENCES: CHUẨN GỐC APPLE, TỰ HIỆN TRANG NGOÀI & BUNG MỤC CON
 //==============================================================
 
-// Khai báo API MobileGestalt gốc để ép trả về YES khi Settings kiểm tra tính năng phần cứng
-extern "C" Boolean MGGetBoolAnswer(CFStringRef property);
-
-%group Group_Preferences
-
-%hookf(Boolean, MGGetBoolAnswer, CFStringRef property) {
+// Con trỏ hook động runtime, không dùng %hookf để tránh lỗi Linker GitHub Actions
+static Boolean (*orig_MGGetBoolAnswer)(CFStringRef property) = NULL;
+static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
     if (property) {
         NSString *key = (__bridge NSString *)property;
         if ([key isEqualToString:@"AlwaysOnDisplaySupport"] || 
@@ -1656,8 +1654,10 @@ extern "C" Boolean MGGetBoolAnswer(CFStringRef property);
             return YES;
         }
     }
-    return %orig;
+    return orig_MGGetBoolAnswer ? orig_MGGetBoolAnswer(property) : NO;
 }
+
+%group Group_Preferences
 
 // ÉP HỆ THỐNG MỞ KHÓA TÍNH NĂNG AOD GỐC CHO PHẦN CÀI ĐẶT
 %hook BLSBacklight
@@ -1705,7 +1705,6 @@ extern "C" Boolean MGGetBoolAnswer(CFStringRef property);
         }
     }
 
-    // Nếu controller gốc vẫn không tự đưa specifier vào do rào chắn phần cứng, tự nạp đúng specifier của DBSAlwaysOnViewController
     if (!hasAODSpec) {
         Class detailClass = NSClassFromString(@"DBSAlwaysOnViewController");
         if (detailClass) {
@@ -1950,6 +1949,15 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
                    [processName.lowercaseString containsString:@"preferences"] || 
                    [bundleID.lowercaseString containsString:@"preferences"]) {
             
+            // Hook MobileGestalt động qua dlsym runtime để không bị lỗi undefined linker khi make
+            void *gestaltHandle = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_NOW);
+            if (gestaltHandle) {
+                void *mgFunc = dlsym(gestaltHandle, "MGGetBoolAnswer");
+                if (mgFunc) {
+                    MSHookFunction(mgFunc, (void *)replaced_MGGetBoolAnswer, (void **)&orig_MGGetBoolAnswer);
+                }
+            }
+
             // Ép nạp framework hiển thị nếu chưa có trong bộ nhớ trước khi khởi tạo Hook
             [[NSBundle bundleWithPath:@"/System/Library/PrivateFrameworks/DisplayAndBrightnessSettings.framework"] load];
             [[NSBundle bundleWithPath:@"/System/Library/PreferenceBundles/Display.bundle"] load];
