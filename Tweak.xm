@@ -1642,7 +1642,22 @@ static id gCachedFlipbookSpec = nil;
 // 5. TẦNG PREFERENCES: CHUẨN GỐC APPLE, TỰ HIỆN TRANG NGOÀI & BUNG MỤC CON
 //==============================================================
 
+// Khai báo API MobileGestalt gốc để ép trả về YES khi Settings kiểm tra tính năng phần cứng
+extern "C" Boolean MGGetBoolAnswer(CFStringRef property);
+
 %group Group_Preferences
+
+%hookf(Boolean, MGGetBoolAnswer, CFStringRef property) {
+    if (property) {
+        NSString *key = (__bridge NSString *)property;
+        if ([key isEqualToString:@"AlwaysOnDisplaySupport"] || 
+            [key isEqualToString:@"DeviceSupportsAlwaysOn"] ||
+            [key isEqualToString:@"oPeik/9e8lQWMszEjbPzng"]) {
+            return YES;
+        }
+    }
+    return %orig;
+}
 
 // ÉP HỆ THỐNG MỞ KHÓA TÍNH NĂNG AOD GỐC CHO PHẦN CÀI ĐẶT
 %hook BLSBacklight
@@ -1657,7 +1672,7 @@ static id gCachedFlipbookSpec = nil;
 + (BOOL)isAlwaysOnDisplaySupported { return YES; }
 %end
 
-// HOOK GỐC VÀO TRANG MÀN HÌNH & ĐỘ SÁNG CỦA APPLE (KHÔNG CẦN CHÈN TAY BẰNG INSERT)
+// HOOK GỐC VÀO TRANG MÀN HÌNH & ĐỘ SÁNG CỦA APPLE
 %hook DBSDisplayAndBrightnessSettingsController
 
 - (BOOL)_deviceSupportsAlwaysOn {
@@ -1676,10 +1691,74 @@ static id gCachedFlipbookSpec = nil;
     return YES;
 }
 
+// Đảm bảo specifier cho AOD không bị loại bỏ khỏi danh sách gốc
+- (NSMutableArray *)specifiers {
+    NSMutableArray *specs = %orig;
+    if (!specs) return specs;
+
+    BOOL hasAODSpec = NO;
+    for (PSSpecifier *s in specs) {
+        NSString *sid = [[s propertyForKey:@"id"] description];
+        if ([sid isEqualToString:@"ALWAYS_ON_DISPLAY"] || [sid isEqualToString:@"ALWAYS_ON"]) {
+            hasAODSpec = YES;
+            break;
+        }
+    }
+
+    // Nếu controller gốc vẫn không tự đưa specifier vào do rào chắn phần cứng, tự nạp đúng specifier của DBSAlwaysOnViewController
+    if (!hasAODSpec) {
+        Class detailClass = NSClassFromString(@"DBSAlwaysOnViewController");
+        if (detailClass) {
+            PSSpecifier *aodSpec = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình Luôn bật"
+                                                                      target:self 
+                                                                         set:NULL 
+                                                                         get:@selector(getAODMasterStatusText:) 
+                                                                      detail:detailClass 
+                                                                        cell:2 // PSLinkCell
+                                                                        edit:Nil];
+            [aodSpec setProperty:@"ALWAYS_ON_DISPLAY" forKey:@"id"];
+            [aodSpec setProperty:detailClass forKey:@"detail"];
+            [aodSpec setProperty:@YES forKey:@"isController"];
+            [aodSpec setProperty:@YES forKey:@"enabled"];
+
+            NSInteger targetIndex = -1;
+            for (NSInteger i = 0; i < (NSInteger)specs.count; i++) {
+                NSString *sid = [[[specs objectAtIndex:i] propertyForKey:@"id"] description].uppercaseString;
+                if ([sid containsString:@"RAISE_TO_WAKE"] || [sid containsString:@"WAKE"]) {
+                    targetIndex = i + 1;
+                    break;
+                }
+            }
+
+            if (targetIndex >= 0 && targetIndex <= (NSInteger)specs.count) {
+                [specs insertObject:aodSpec atIndex:targetIndex];
+            } else {
+                [specs addObject:aodSpec];
+            }
+        }
+    }
+
+    return specs;
+}
+
+%new
+- (id)getAODMasterStatusText:(PSSpecifier *)spec {
+    Boolean valid = false;
+    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("AlwaysOnDisplayEnabled"), CFSTR("com.apple.BacklightServices"), &valid);
+    if (!valid) val = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.apple.BacklightServices"), &valid);
+    if (!valid) val = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.jb.aodreal"), &valid);
+    BOOL isEnabled = valid ? (BOOL)val : YES;
+    return isEnabled ? @"Bật" : @"Tắt";
+}
+
 %end
 
 // TRANG CON AOD: SỬ DỤNG HOÀN TOÀN SPECIFIERS GỐC CỦA APPLE KÈM THANH KÉO PHẦN CỨNG
 %hook DBSAlwaysOnViewController
+
+- (BOOL)shouldShowAlwaysOn {
+    return YES;
+}
 
 - (id)isAlwaysOnEnabled:(PSSpecifier *)specifier { 
     Boolean valid = false;
@@ -1870,6 +1949,11 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
         } else if ([bundleID isEqualToString:@"com.apple.Preferences"] || 
                    [processName.lowercaseString containsString:@"preferences"] || 
                    [bundleID.lowercaseString containsString:@"preferences"]) {
+            
+            // Ép nạp framework hiển thị nếu chưa có trong bộ nhớ trước khi khởi tạo Hook
+            [[NSBundle bundleWithPath:@"/System/Library/PrivateFrameworks/DisplayAndBrightnessSettings.framework"] load];
+            [[NSBundle bundleWithPath:@"/System/Library/PreferenceBundles/Display.bundle"] load];
+
             %init(Group_Preferences);
         }
     }
