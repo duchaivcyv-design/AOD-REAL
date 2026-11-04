@@ -2188,15 +2188,18 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 //==============================================================
 
 static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    loadAODPreferences();
+    loadAODPreferences();[span_0](start_span)[span_0](end_span)
 }
 
 %ctor {
     @autoreleasepool {
+        // 1. Khởi tạo bắt buộc cho nhóm mặc định (chứa %subclass và các hook ngoài group)
+        %init;
+
         NSString *processName = [[NSProcessInfo processInfo] processName];
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
 
-        loadAODPreferences();
+        loadAODPreferences();[span_1](start_span)[span_1](end_span)
 
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
@@ -2207,19 +2210,28 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
             CFNotificationSuspensionBehaviorDeliverImmediately
         );
 
-        if ([bundleID isEqualToString:@"com.apple.springboard"] || [processName isEqualToString:@"SpringBoard"]) {
-            gIsSpringBoardProcess = YES;
-            gCurrentState = AODStateIdle;
+        // 2. Khởi tạo theo từng tiến trình hệ thống
+        if ([bundleID isEqualToString:@"com.apple.springboard"] || 
+            [processName isEqualToString:@"SpringBoard"] || 
+            [processName.lowercaseString isEqualToString:@"springboard"]) {
+            
+            gIsSpringBoardProcess = YES;[span_2](start_span)[span_2](end_span)
+            gCurrentState = AODStateIdle;[span_3](start_span)[span_3](end_span)
             %init(Group_SpringBoard);
+            
         } else if ([bundleID isEqualToString:@"com.apple.PosterBoard"] || 
                    [processName.lowercaseString containsString:@"posterboard"]) {
+            
             %init(Group_PosterBoard);
+            
         } else if ([processName isEqualToString:@"backboardd"]) {
+            
             %init(Group_Backboardd);
+            
         } else if ([bundleID isEqualToString:@"com.apple.Preferences"] || 
                    [processName.lowercaseString containsString:@"preferences"]) {
             
-            // 1. Hook MobileGestalt
+            // Hook MobileGestalt runtime
             void *gestaltHandle = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_NOW);
             if (gestaltHandle) {
                 void *mgFunc = dlsym(gestaltHandle, "MGGetBoolAnswer");
@@ -2228,13 +2240,12 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
                 }
             }
 
-            // 2. Ép nạp các bundle hiển thị của Apple vào không gian nhớ Preferences
+            // Ép nạp các bundle hiển thị của Apple vào bộ nhớ Preferences
             [[NSBundle bundleWithPath:@"/System/Library/PreferenceBundles/Display.bundle"] load];
             dlopen("/System/Library/PreferenceBundles/Display.bundle/Display", RTLD_NOW | RTLD_GLOBAL);
             dlopen("/System/Library/PrivateFrameworks/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);
             dlopen("/System/Library/PrivateFrameworks/Settings/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);
 
-            // 3. Khởi tạo trực tiếp nhóm Preferences
             %init(Group_Preferences);
         }
     }
