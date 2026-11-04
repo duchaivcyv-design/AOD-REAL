@@ -1900,17 +1900,10 @@ static id gCachedFlipbookSpec = nil;
     for (PSSpecifier *s in [self specifiers]) {
         if ([[s propertyForKey:@"id"] isEqualToString:@"AOD_HZ_GROUP_ID"]) {
             [s setProperty:[NSString stringWithFormat:@"Hiện tại: %.0f Hz (Tần số quét màn hình khi hiển thị AOD tĩnh)", roundedHz] forKey:@"footerText"];
-            if ([self respondsToSelector:@selector(reloadSpecifier:animated:)]) {
-                NSMethodSignature *sig = [self methodSignatureForSelector:@selector(reloadSpecifier:animated:)];
-                if (sig) {
-                    NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-                    [inv setTarget:self];
-                    [inv setSelector:@selector(reloadSpecifier:animated:)];
-                    [inv setArgument:&s atIndex:2];
-                    BOOL animated = NO;
-                    [inv setArgument:&animated atIndex:3];
-                    [inv invoke];
-                }
+            SEL reloadSel = @selector(reloadSpecifier:animated:);
+            if ([self respondsToSelector:reloadSel]) {
+                void (*reloadFunc)(id, SEL, id, BOOL) = (void (*)(id, SEL, id, BOOL))objc_msgSend;
+                reloadFunc(self, reloadSel, s, NO);
             }
             break;
         }
@@ -1938,17 +1931,10 @@ static id gCachedFlipbookSpec = nil;
     for (PSSpecifier *s in [self specifiers]) {
         if ([[s propertyForKey:@"id"] isEqualToString:@"AOD_BRIGHTNESS_GROUP_ID"]) {
             [s setProperty:[NSString stringWithFormat:@"Mức sáng: %.1f (Kéo thanh trượt để tinh chỉnh độ sáng đèn nền vừa mắt)", b] forKey:@"footerText"];
-            if ([self respondsToSelector:@selector(reloadSpecifier:animated:)]) {
-                NSMethodSignature *sig = [self methodSignatureForSelector:@selector(reloadSpecifier:animated:)];
-                if (sig) {
-                    NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-                    [inv setTarget:self];
-                    [inv setSelector:@selector(reloadSpecifier:animated:)];
-                    [inv setArgument:&s atIndex:2];
-                    BOOL animated = NO;
-                    [inv setArgument:&animated atIndex:3];
-                    [inv invoke];
-                }
+            SEL reloadSel = @selector(reloadSpecifier:animated:);
+            if ([self respondsToSelector:reloadSel]) {
+                void (*reloadFunc)(id, SEL, id, BOOL) = (void (*)(id, SEL, id, BOOL))objc_msgSend;
+                reloadFunc(self, reloadSel, s, NO);
             }
             break;
         }
