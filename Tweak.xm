@@ -189,6 +189,16 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 - (id)loadSpecifiersFromPlistName:(NSString *)name target:(id)target bundle:(NSBundle *)bundle;
 @end
 
+// Lớp giao diện nội bộ tweak mở rộng từ PSListController
+@interface AODRealInternalViewController : PSListController
+- (id)getAODVal:(PSSpecifier *)spec;
+- (void)setAODVal:(id)value specifier:(PSSpecifier *)spec;
+- (id)getCustomHz:(PSSpecifier *)spec;
+- (void)setCustomHz:(id)value spec:(PSSpecifier *)spec;
+- (id)getCustomBrightness:(PSSpecifier *)spec;
+- (void)setCustomBrightness:(id)value spec:(PSSpecifier *)spec;
+@end
+
 @interface DBSMainDisplayPreferencesController : PSListController
 - (NSMutableArray *)specifiers;
 - (id)getAODMasterStatusText:(PSSpecifier *)spec;
@@ -356,6 +366,7 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 - (id)vibrancyConfiguration;
 - (_UILegibilitySettings *)legibilitySettings;
 - (void)setLegibilitySettings:(_UILegibilitySettings *)settings;
+- (void)setTextColor:(UIColor *)color;
 @end
 
 @interface SBFLockScreenDateViewController : UIViewController
