@@ -159,6 +159,8 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 @interface PSListController : UIViewController
 - (NSMutableArray *)specifiers;
 - (void)reloadSpecifiers;
+- (PSSpecifier *)specifierForID:(NSString *)specifierID;
+- (void)reloadSpecifier:(PSSpecifier *)specifier animated:(BOOL)animated;
 - (void)insertSpecifier:(PSSpecifier *)specifier atIndex:(NSInteger)index animated:(BOOL)animated;
 - (void)addSpecifier:(PSSpecifier *)specifier animated:(BOOL)animated;
 @end
@@ -1895,10 +1897,23 @@ static id gCachedFlipbookSpec = nil;
 
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
 
-    PSSpecifier *hzGroup = [self specifierForID:@"AOD_HZ_GROUP_ID"];
-    if (hzGroup) {
-        [hzGroup setProperty:[NSString stringWithFormat:@"Hiện tại: %.0f Hz (Tần số quét màn hình khi hiển thị AOD tĩnh)", roundedHz] forKey:@"footerText"];
-        [self reloadSpecifier:hzGroup animated:NO];
+    for (PSSpecifier *s in [self specifiers]) {
+        if ([[s propertyForKey:@"id"] isEqualToString:@"AOD_HZ_GROUP_ID"]) {
+            [s setProperty:[NSString stringWithFormat:@"Hiện tại: %.0f Hz (Tần số quét màn hình khi hiển thị AOD tĩnh)", roundedHz] forKey:@"footerText"];
+            if ([self respondsToSelector:@selector(reloadSpecifier:animated:)]) {
+                NSMethodSignature *sig = [self methodSignatureForSelector:@selector(reloadSpecifier:animated:)];
+                if (sig) {
+                    NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+                    [inv setTarget:self];
+                    [inv setSelector:@selector(reloadSpecifier:animated:)];
+                    [inv setArgument:&s atIndex:2];
+                    BOOL animated = NO;
+                    [inv setArgument:&animated atIndex:3];
+                    [inv invoke];
+                }
+            }
+            break;
+        }
     }
 }
 
@@ -1920,10 +1935,23 @@ static id gCachedFlipbookSpec = nil;
     // Bắn thông báo cập nhật trực tiếp xuống SpringBoard / Backlight
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
 
-    PSSpecifier *brGroup = [self specifierForID:@"AOD_BRIGHTNESS_GROUP_ID"];
-    if (brGroup) {
-        [brGroup setProperty:[NSString stringWithFormat:@"Mức sáng: %.1f (Kéo thanh trượt để tinh chỉnh độ sáng đèn nền vừa mắt)", b] forKey:@"footerText"];
-        [self reloadSpecifier:brGroup animated:NO];
+    for (PSSpecifier *s in [self specifiers]) {
+        if ([[s propertyForKey:@"id"] isEqualToString:@"AOD_BRIGHTNESS_GROUP_ID"]) {
+            [s setProperty:[NSString stringWithFormat:@"Mức sáng: %.1f (Kéo thanh trượt để tinh chỉnh độ sáng đèn nền vừa mắt)", b] forKey:@"footerText"];
+            if ([self respondsToSelector:@selector(reloadSpecifier:animated:)]) {
+                NSMethodSignature *sig = [self methodSignatureForSelector:@selector(reloadSpecifier:animated:)];
+                if (sig) {
+                    NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+                    [inv setTarget:self];
+                    [inv setSelector:@selector(reloadSpecifier:animated:)];
+                    [inv setArgument:&s atIndex:2];
+                    BOOL animated = NO;
+                    [inv setArgument:&animated atIndex:3];
+                    [inv invoke];
+                }
+            }
+            break;
+        }
     }
 }
 
