@@ -840,9 +840,6 @@ static id gCachedFlipbookSpec = nil;
                 gCurrentState = AODStateActive;
                 // KHI ĐÃ VÀO AOD TĨNH HOÀN TOÀN MỚI CHO PHÉP ẨN THANH TRÊN VÀ CÁC NÚT PHỤ
                 @try {
-                    if ([self respondsToSelector:@selector(_setStatusBarHidden:forReason:)]) {
-                        [self performSelector:@selector(_setStatusBarHidden:forReason:) withObject:@(YES) withObject:@"AODReal"];
-                    }
                     UIViewController *statusBarVC = [self valueForKey:@"_statusBarViewController"];
                     if (statusBarVC) statusBarVC.view.alpha = 0.0f;
 
@@ -860,9 +857,6 @@ static id gCachedFlipbookSpec = nil;
 
         // ĐÁNH THỨC MÀN HÌNH KHÓA: HIỂN THỊ LẠI TOÀN BỘ THANH TRÊN VÀ NÚT BẤM NGAY LẬP TỨC
         @try {
-            if ([self respondsToSelector:@selector(_setStatusBarHidden:forReason:)]) {
-                [self performSelector:@selector(_setStatusBarHidden:forReason:) withObject:@(NO) withObject:@"AODReal"];
-            }
             UIViewController *statusBarVC = [self valueForKey:@"_statusBarViewController"];
             if (statusBarVC) statusBarVC.view.alpha = 1.0f;
 
@@ -950,20 +944,9 @@ static id gCachedFlipbookSpec = nil;
     }
 }
 
+// KHÔNG CHÈN MẢNG RỖNG VÀO ĐÂY ĐỂ TRIỆT TIÊU SIGABRT TẠI [NSMutableSet unionSet:]
 - (NSArray *)sceneHostEnvironmentEntriesForBacklightSession {
-    if (isAODMasterEnabled() && !isWallpaperEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-        return @[];
-    }
-    NSArray *entries = %orig;
-    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-        if (!entries || entries.count == 0) {
-            @try {
-                id sceneHost = [self valueForKey:@"_sceneHostEnvironment"];
-                if (sceneHost) return @[sceneHost];
-            } @catch (NSException *e) {}
-        }
-    }
-    return entries;
+    return %orig;
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
@@ -974,9 +957,6 @@ static id gCachedFlipbookSpec = nil;
         
         // Đảm bảo khi rời màn hình khóa, thanh trạng thái luôn hiển thị
         @try {
-            if ([self respondsToSelector:@selector(_setStatusBarHidden:forReason:)]) {
-                [self performSelector:@selector(_setStatusBarHidden:forReason:) withObject:@(NO) withObject:@"AODReal"];
-            }
             UIViewController *statusBarVC = [self valueForKey:@"_statusBarViewController"];
             if (statusBarVC) statusBarVC.view.alpha = 1.0f;
         } @catch (NSException *e) {}
@@ -1025,9 +1005,6 @@ static id gCachedFlipbookSpec = nil;
 }
 
 - (NSArray *)sceneHostEnvironmentEntriesForBacklightSession {
-    if (isAODMasterEnabled() && !isNotificationsEnabled()) {
-        return @[];
-    }
     return %orig;
 }
 
@@ -1045,9 +1022,6 @@ static id gCachedFlipbookSpec = nil;
 }
 
 - (NSArray *)sceneHostEnvironmentEntriesForBacklightSession {
-    if (isAODMasterEnabled() && !isWallpaperEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-        return @[]; // Ngắt hoàn toàn session nền poster khi tắt công tắc hình nền
-    }
     return %orig;
 }
 
