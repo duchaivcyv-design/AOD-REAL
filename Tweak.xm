@@ -823,6 +823,7 @@ static void restoreLockScreenActiveUI(void) {
 
                 UIViewController *combinedListVC = [gCoverSheetVC valueForKey:@"_combinedListViewController"];
                 if (combinedListVC) {
+                    combinedListVC.view.transform = CGAffineTransformIdentity;
                     combinedListVC.view.alpha = 1.0f;
                     combinedListVC.view.hidden = NO;
                 }
@@ -917,8 +918,36 @@ static void restoreLockScreenActiveUI(void) {
         if (gCurrentState == AODStateActive) return;
         gCurrentState = AODStateTransitioning;
 
+        // 1. Ẩn NGAY LẬP TỨC Status Bar, Home Affordance và 2 nút công cụ dưới đáy
+        @try {
+            UIViewController *statusBarVC = [self valueForKey:@"_statusBarViewController"];
+            UIViewController *homeAffordanceVC = [self valueForKey:@"_homeAffordanceViewController"];
+            UIViewController *quickActionsVC = [self valueForKey:@"_quickActionsViewController"];
+            
+            [UIView animateWithDuration:0.15f delay:0.0f options:UIViewAnimationOptionCurveEaseOut animations:^{
+                if (statusBarVC) statusBarVC.view.alpha = 0.0f;
+                if (homeAffordanceVC) homeAffordanceVC.view.alpha = 0.0f;
+                if (quickActionsVC) quickActionsVC.view.alpha = 0.0f;
+            } completion:^(BOOL fin) {
+                if (statusBarVC) statusBarVC.view.hidden = YES;
+                if (homeAffordanceVC) homeAffordanceVC.view.hidden = YES;
+                if (quickActionsVC) quickActionsVC.view.hidden = YES;
+            }];
+        } @catch (NSException *e) {}
+
+        // 2. Chuyển cảnh lặn 0.45s: Thu nhẹ màn hình + ÉP NHẸ THÔNG BÁO dạng nén co giãn
         [UIView animateWithDuration:0.45f delay:0.0f options:UIViewAnimationOptionCurveEaseInOut animations:^{
             self.view.transform = CGAffineTransformMakeScale(0.985f, 0.985f);
+
+            // Ép nhẹ kích thước khối thông báo như gốc Apple
+            @try {
+                UIViewController *combinedListVC = [self valueForKey:@"_combinedListViewController"];
+                if (combinedListVC) {
+                    combinedListVC.view.transform = CGAffineTransformMakeScale(0.975f, 0.975f);
+                    combinedListVC.view.alpha = isNotificationsEnabled() ? 0.85f : 0.0f;
+                }
+            } @catch (NSException *e) {}
+
             @try {
                 [self _animateView:self.view toWhitePointReduced:YES withDuration:0.45f withDispatchGroup:nil];
                 [self _updateWallpaperEffectView];
@@ -929,18 +958,11 @@ static void restoreLockScreenActiveUI(void) {
             if (finished && gCurrentState == AODStateTransitioning) {
                 gCurrentState = AODStateActive;
                 @try {
-                    UIViewController *statusBarVC = [self valueForKey:@"_statusBarViewController"];
-                    if (statusBarVC) {
-                        [UIView animateWithDuration:0.2f animations:^{
-                            statusBarVC.view.alpha = 0.0f;
-                        }];
+                    UIViewController *combinedListVC = [self valueForKey:@"_combinedListViewController"];
+                    if (combinedListVC) {
+                        combinedListVC.view.hidden = !isNotificationsEnabled();
+                        combinedListVC.view.alpha = isNotificationsEnabled() ? 1.0f : 0.0f;
                     }
-
-                    UIViewController *homeAffordanceVC = [self valueForKey:@"_homeAffordanceViewController"];
-                    if (homeAffordanceVC) homeAffordanceVC.view.alpha = 0.0f;
-
-                    UIViewController *quickActionsVC = [self valueForKey:@"_quickActionsViewController"];
-                    if (quickActionsVC) quickActionsVC.view.alpha = 0.0f;
                 } @catch (NSException *e) {}
             }
         }];
@@ -971,26 +993,47 @@ static void restoreLockScreenActiveUI(void) {
                 homeAffordanceVC.view.alpha = 1.0f;
                 homeAffordanceVC.view.hidden = NO;
             }
+            UIViewController *quickActionsVC = [self valueForKey:@"_quickActionsViewController"];
+            if (quickActionsVC) {
+                quickActionsVC.view.alpha = 1.0f;
+                quickActionsVC.view.hidden = NO;
+            }
         } @catch (NSException *e) {}
     }
 }
 
+// XỬ LÝ HÌNH NỀN VÀ KHẮC PHỤC TRIỆT ĐỂ LỖI ĐEN LÕM CHIỀU SÂU (DEPTH EFFECT)
 - (void)_updateWallpaperEffectView {
     %orig;
     
     UIView *floatingLayer = nil;
     UIView *effectView = nil;
     UIView *bgView = nil;
+    UIView *posterPortalView = nil;
+
     @try {
         floatingLayer = [self valueForKey:@"_wallpaperFloatingLayerContainerView"];
         effectView = [self valueForKey:@"_wallpaperEffectView"];
         bgView = [self valueForKey:@"_backgroundView"];
+        posterPortalView = [self valueForKey:@"_posterPortalView"];
     } @catch (NSException *e) {}
 
     if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
         if (!isWallpaperEnabled()) {
-            if (floatingLayer) floatingLayer.alpha = 0.0f;
-            if (bgView) bgView.alpha = 0.0f;
+            // TẮT HÌNH NỀN: ÉP ĐỒNG BỘ 100% TẤT CẢ CÁC LỚP NỀN & LỚP NỔI CHIỀU SÂU VỀ ĐEN
+            // Loại bỏ hoàn toàn tình trạng phần lõm chiều sâu bị đen loang lổ
+            if (floatingLayer) {
+                floatingLayer.alpha = 0.0f;
+                floatingLayer.hidden = YES;
+            }
+            if (bgView) {
+                bgView.alpha = 0.0f;
+                bgView.hidden = YES;
+            }
+            if (posterPortalView) {
+                posterPortalView.alpha = 0.0f;
+                posterPortalView.hidden = YES;
+            }
             if (effectView) {
                 effectView.hidden = NO;
                 effectView.backgroundColor = [UIColor blackColor];
@@ -998,8 +1041,19 @@ static void restoreLockScreenActiveUI(void) {
             }
             self.view.backgroundColor = [UIColor blackColor];
         } else {
-            if (floatingLayer) floatingLayer.alpha = 1.0f;
-            if (bgView) bgView.alpha = 1.0f;
+            // BẬT HÌNH NỀN: GIỮ NGUYÊN TẤNG CHIỀU SÂU VÀ ÁP LỚP MỜ ĐỒNG BỘ
+            if (floatingLayer) {
+                floatingLayer.hidden = NO;
+                floatingLayer.alpha = 1.0f;
+            }
+            if (bgView) {
+                bgView.hidden = NO;
+                bgView.alpha = 1.0f;
+            }
+            if (posterPortalView) {
+                posterPortalView.hidden = NO;
+                posterPortalView.alpha = 1.0f;
+            }
             if (effectView) {
                 effectView.hidden = NO;
                 if (isBlurWallpaperEnabled()) {
@@ -1013,8 +1067,18 @@ static void restoreLockScreenActiveUI(void) {
             self.view.backgroundColor = [UIColor clearColor];
         }
     } else {
-        if (floatingLayer) floatingLayer.alpha = 1.0f;
-        if (bgView) bgView.alpha = 1.0f;
+        if (floatingLayer) {
+            floatingLayer.hidden = NO;
+            floatingLayer.alpha = 1.0f;
+        }
+        if (bgView) {
+            bgView.hidden = NO;
+            bgView.alpha = 1.0f;
+        }
+        if (posterPortalView) {
+            posterPortalView.hidden = NO;
+            posterPortalView.alpha = 1.0f;
+        }
         if (effectView) {
             effectView.backgroundColor = [UIColor clearColor];
             effectView.alpha = 0.0f;
@@ -1120,34 +1184,33 @@ static void restoreLockScreenActiveUI(void) {
 %end
 
 // -------------------------------------------------------------
-// ĐỒNG HỒ & WIDGET: CHỐNG ĐEN MÀN LCD, GIỮ TƯƠNG PHẢN CAO
+// ĐỒNG HỒ & WIDGET: CHỐNG MỜ TRONG SUỐT (LIQUID GLASS), ÉP ĐỤC TRẮNG SÁNG RÕ NÉT
 // -------------------------------------------------------------
 %hook SBFLockScreenDateView
 
 - (id)vibrancyConfiguration {
-    id orig = %orig;
+    // Triệt tiêu vibrancy trong suốt khi vào AOD để đồng hồ không bị chìm/mờ
     if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-        if (orig && [orig respondsToSelector:@selector(copyWithLuminanceReduced:)]) {
-            return [orig performSelector:@selector(copyWithLuminanceReduced:) withObject:@(NO)];
-        }
+        return nil;
     }
-    return orig;
+    return %orig;
 }
 
 - (_UILegibilitySettings *)legibilitySettings {
-    _UILegibilitySettings *orig = %orig;
     if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-        UIColor *textColor = orig ? [orig primaryColor] : nil;
-        if (textColor) {
-            CGFloat r = 0, g = 0, b = 0, a = 0;
-            [textColor getRed:&r green:&g blue:&b alpha:&a];
-            if (r < 0.25f && g < 0.25f && b < 0.25f) {
-                return [%c(_UILegibilitySettings) sharedInstanceForStyle:1];
-            }
-        }
-        return orig;
+        // Ép phong cách đục màu trắng nguyên khối (Style 1: White legibility)
+        return [%c(_UILegibilitySettings) sharedInstanceForStyle:1];
     }
-    return orig;
+    return %orig;
+}
+
+// Đảm bảo các nhãn thời gian và ngày tháng luôn giữ sắc trắng đục nguyên chất
+- (void)setTextColor:(UIColor *)color {
+    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+        %orig([UIColor colorWithWhite:1.0f alpha:0.92f]);
+        return;
+    }
+    %orig(color);
 }
 
 %end
@@ -1156,25 +1219,16 @@ static void restoreLockScreenActiveUI(void) {
 
 - (BOOL)restrictsVibrancy {
     if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-        return NO;
+        return YES; // Hạn chế tối đa hiệu ứng trong suốt để giữ sắc trắng đục
     }
     return %orig;
 }
 
 - (_UILegibilitySettings *)legibilitySettings {
-    _UILegibilitySettings *orig = %orig;
     if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-        UIColor *textColor = orig ? [orig primaryColor] : nil;
-        if (textColor) {
-            CGFloat r = 0, g = 0, b = 0, a = 0;
-            [textColor getRed:&r green:&g blue:&b alpha:&a];
-            if (r < 0.25f && g < 0.25f && b < 0.25f) {
-                return [%c(_UILegibilitySettings) sharedInstanceForStyle:1];
-            }
-        }
-        return orig;
+        return [%c(_UILegibilitySettings) sharedInstanceForStyle:1];
     }
-    return orig;
+    return %orig;
 }
 
 - (void)_updateWithFrameSpecifier:(id)arg1 {
