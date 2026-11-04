@@ -2,13 +2,13 @@
     Filter = {
         Bundles = (
             "com.apple.Preferences",
-            "com.apple.DisplayAndBrightnessSettings",
-            "com.apple.SpringBoard",
             "com.apple.springboard",
             "com.apple.PosterBoard"
         );
         Executables = (
-            "backboardd"
+            "backboardd",
+            "PaperBoard",
+            "ClockAngel"
         );
     };
 }
