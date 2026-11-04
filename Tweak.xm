@@ -1672,8 +1672,9 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 %hook DBSMainDisplayPreferencesController
 
 - (NSMutableArray *)specifiers {
-    NSMutableArray *specs = %orig;
-    if (!specs) return specs;
+    // 1. Phải mutableCopy để mảng có thể insert/add mà không bị crash ngầm
+    NSArray *origSpecs = %orig;
+    NSMutableArray *specs = origSpecs ? [origSpecs mutableCopy] : [NSMutableArray array];
 
     static NSString *const kAODEntryID = @"ALWAYS_ON_DISPLAY_ENTRY_ROW";
     for (PSSpecifier *s in specs) {
@@ -1699,7 +1700,6 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
                                                                     edit:Nil];
         [aodSpec setProperty:kAODEntryID forKey:@"id"];
         [aodSpec setProperty:detailClass forKey:@"detail"];
-        [aodSpec setProperty:NSStringFromClass(detailClass) forKey:@"detail"];
         [aodSpec setProperty:@YES forKey:@"isController"];
         [aodSpec setProperty:@YES forKey:@"enabled"];
 
@@ -1729,6 +1729,8 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
         }
     }
 
+    // 2. Gán ngược lại vào ivar cache của PSListController
+    [self setValue:specs forKey:@"_specifiers"];
     return specs;
 }
 
