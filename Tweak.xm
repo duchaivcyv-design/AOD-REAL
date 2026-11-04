@@ -217,7 +217,6 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
         } 
         else if ([bid isEqualToString:@"com.apple.springboard"] || [proc isEqualToString:@"SpringBoard"]) {
             %init(Group_SpringBoard);
-            %init(Group_Backboardd); // Gỡ policy trên SpringBoard
         } 
         else if ([proc isEqualToString:@"backboardd"]) {
             %init(Group_Backboardd);
