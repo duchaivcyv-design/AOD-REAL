@@ -1635,12 +1635,11 @@ static id gCachedFlipbookSpec = nil;
 
 %end // Group_PosterBoard
 
-
 //==============================================================
 // 5. TẦNG PREFERENCES: CHUẨN GỐC APPLE, TỰ HIỆN TRANG NGOÀI & BUNG MỤC CON
 //==============================================================
 
-// Con trỏ hook động runtime, không dùng %hookf để tránh lỗi Linker GitHub Actions
+// Con trỏ hook động runtime MobileGestalt
 static Boolean (*orig_MGGetBoolAnswer)(CFStringRef property) = NULL;
 static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
     if (property) {
@@ -1669,7 +1668,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 + (BOOL)isAlwaysOnDisplaySupported { return YES; }
 %end
 
-// HOOK TRỰC TIẾP VÀO ĐÚNG CLASS THỰC TẾ TRÊN MÁY: DBSMainDisplayPreferencesController
+// HOOK TRỰC TIẾP VÀO CONTROLLER MÀN HÌNH: DBSMainDisplayPreferencesController
 %hook DBSMainDisplayPreferencesController
 
 - (NSMutableArray *)specifiers {
@@ -1684,50 +1683,55 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
     }
 
     Class detailClass = NSClassFromString(@"DBSAlwaysOnViewController");
-    if (!detailClass) return specs;
-
-    // Tìm vị trí sau mục "Đưa lên để bật" (Raise to Wake)
-    NSInteger targetIndex = -1;
-    for (NSInteger i = 0; i < (NSInteger)specs.count; i++) {
-        NSString *sid = [[[specs objectAtIndex:i] propertyForKey:@"id"] description].uppercaseString;
-        if ([sid containsString:@"RAISE_TO_WAKE"] || [sid containsString:@"WAKE"]) {
-            targetIndex = i + 1;
-            break;
-        }
+    if (!detailClass) {
+        dlopen("/System/Library/PrivateFrameworks/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW);
+        dlopen("/System/Library/PrivateFrameworks/Settings/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW);
+        detailClass = NSClassFromString(@"DBSAlwaysOnViewController");
     }
-    if (targetIndex < 0) {
+
+    if (detailClass) {
+        PSSpecifier *aodSpec = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình Luôn bật"
+                                                                  target:self 
+                                                                     set:NULL 
+                                                                     get:@selector(getAODMasterStatusText:) 
+                                                                  detail:detailClass 
+                                                                    cell:2 // PSLinkCell
+                                                                    edit:Nil];
+        [aodSpec setProperty:kAODEntryID forKey:@"id"];
+        [aodSpec setProperty:detailClass forKey:@"detail"];
+        [aodSpec setProperty:NSStringFromClass(detailClass) forKey:@"detail"];
+        [aodSpec setProperty:@YES forKey:@"isController"];
+        [aodSpec setProperty:@YES forKey:@"enabled"];
+
+        // Chèn vào vị trí kế sau mục "Đưa lên để bật" hoặc "Tự động khóa"
+        NSInteger targetIndex = -1;
         for (NSInteger i = 0; i < (NSInteger)specs.count; i++) {
             NSString *sid = [[[specs objectAtIndex:i] propertyForKey:@"id"] description].uppercaseString;
-            if ([sid containsString:@"AUTOLOCK"] || [sid containsString:@"AUTO_LOCK"]) {
+            if ([sid containsString:@"RAISE_TO_WAKE"] || [sid containsString:@"WAKE"]) {
                 targetIndex = i + 1;
                 break;
             }
         }
-    }
+        if (targetIndex < 0) {
+            for (NSInteger i = 0; i < (NSInteger)specs.count; i++) {
+                NSString *sid = [[[specs objectAtIndex:i] propertyForKey:@"id"] description].uppercaseString;
+                if ([sid containsString:@"AUTOLOCK"] || [sid containsString:@"AUTO_LOCK"]) {
+                    targetIndex = i + 1;
+                    break;
+                }
+            }
+        }
 
-    // Tạo mục hàng chuẩn Apple dẫn vào DBSAlwaysOnViewController gốc
-    PSSpecifier *aodSpec = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình Luôn bật"
-                                                              target:self 
-                                                                 set:NULL 
-                                                                 get:@selector(getAODMasterStatusText:) 
-                                                              detail:detailClass 
-                                                                cell:2 // PSLinkCell
-                                                                edit:Nil];
-    [aodSpec setProperty:kAODEntryID forKey:@"id"];
-    [aodSpec setProperty:detailClass forKey:@"detail"];
-    [aodSpec setProperty:@YES forKey:@"isController"];
-    [aodSpec setProperty:@YES forKey:@"enabled"];
-
-    if (targetIndex >= 0 && targetIndex <= (NSInteger)specs.count) {
-        [specs insertObject:aodSpec atIndex:targetIndex];
-    } else {
-        [specs addObject:aodSpec];
+        if (targetIndex >= 0 && targetIndex <= (NSInteger)specs.count) {
+            [specs insertObject:aodSpec atIndex:targetIndex];
+        } else {
+            [specs addObject:aodSpec];
+        }
     }
 
     return specs;
 }
 
-// Trả về chữ "Bật" hoặc "Tắt" bên phải hàng link
 %new
 - (id)getAODMasterStatusText:(PSSpecifier *)spec {
     Boolean valid = false;
@@ -1767,7 +1771,6 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
     [self reloadSpecifiers];
 }
 
-// BỔ SUNG 2 THANH TRƯỢT PHẦN CỨNG VÀO BỐ CỤC GỐC
 - (NSMutableArray *)specifiers {
     NSMutableArray *specs = %orig;
     if (!specs) {
@@ -1806,7 +1809,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
         [specs addObject:hzSlider];
 
         // THANH TRƯỢT 2: ĐỘ SÁNG MÀN HÌNH TĨNH AOD (0.5 - 20)
-        PSSpecifier *brightGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"ĐỘ SÁNG MÀN HĨNH TĨNH AOD" target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
+        PSSpecifier *brightGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"ĐỘ SÁNG MÀN HÌNH TĨNH AOD" target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
         float curBr = getCustomAODBrightnessFactor() * 1000.0f;
         [brightGroup setProperty:[NSString stringWithFormat:@"Mức sáng: %.1f (Kéo thanh trượt để tinh chỉnh độ sáng đèn nền vừa mắt)", curBr] forKey:@"footerText"];
         [brightGroup setProperty:@"AOD_BRIGHTNESS_GROUP_ID" forKey:@"id"];
@@ -1900,7 +1903,6 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 // 6. KHỞI TẠO TIẾN TRÌNH & ĐỒNG BỘ CẤU HÌNH REALTIME
 //==============================================================
 
-// Callback đồng bộ cấu hình tức thì từ Darwin Notification
 static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     loadAODPreferences();
 }
@@ -1910,10 +1912,8 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
         NSString *processName = [[NSProcessInfo processInfo] processName];
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
 
-        // 1. Tải cấu hình vào bộ nhớ RAM ngay khi dylib inject
         loadAODPreferences();
 
-        // 2. Lắng nghe Darwin Notification để cập nhật cấu hình realtime không cần respring
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
             NULL,
@@ -1923,7 +1923,6 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
             CFNotificationSuspensionBehaviorDeliverImmediately
         );
 
-        // 3. Phân luồng nạp Hook - Mỗi %init chỉ xuất hiện duy nhất 1 lần trong toàn bộ mã nguồn
         if ([bundleID isEqualToString:@"com.apple.springboard"] || [processName isEqualToString:@"SpringBoard"]) {
             gIsSpringBoardProcess = YES;
             gCurrentState = AODStateIdle;
@@ -1946,11 +1945,26 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
                 }
             }
 
-            // Ép nạp đúng Private Framework chứa DBSMainDisplayPreferencesController
-            [[NSBundle bundleWithPath:@"/System/Library/PrivateFrameworks/DisplayAndBrightnessSettings.framework"] load];
-            [[NSBundle bundleWithPath:@"/System/Library/PrivateFrameworks/Settings/DisplayAndBrightnessSettings.framework"] load];
+            // Ép dyld nạp binary thực tế của DisplayAndBrightnessSettings qua dlopen
+            dlopen("/System/Library/PrivateFrameworks/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW);
+            dlopen("/System/Library/PrivateFrameworks/Settings/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW);
 
-            %init(Group_Preferences);
+            // Khởi tạo Group Preferences ngay khi class đã tồn tại trong runtime
+            if (objc_getClass("DBSMainDisplayPreferencesController")) {
+                %init(Group_Preferences);
+            } else {
+                [[NSNotificationCenter defaultCenter] addObserverForName:NSBundleDidLoadNotification
+                                                                  object:nil
+                                                                   queue:[NSOperationQueue mainQueue]
+                                                              usingBlock:^(NSNotification *note) {
+                    if (objc_getClass("DBSMainDisplayPreferencesController")) {
+                        static dispatch_once_t onceToken;
+                        dispatch_once(&onceToken, ^{
+                            %init(Group_Preferences);
+                        });
+                    }
+                }];
+            }
         }
     }
 }
