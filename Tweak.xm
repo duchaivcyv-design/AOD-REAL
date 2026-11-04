@@ -838,7 +838,11 @@ static id gCachedFlipbookSpec = nil;
         } completion:^(BOOL finished) {
             if (finished) {
                 gCurrentState = AODStateActive;
+                // KHI ĐÃ VÀO AOD TĨNH HOÀN TOÀN MỚI CHO PHÉP ẨN THANH TRÊN VÀ CÁC NÚT PHỤ
                 @try {
+                    UIViewController *statusBarVC = [self valueForKey:@"_statusBarViewController"];
+                    if (statusBarVC) statusBarVC.view.alpha = 0.0f;
+
                     UIViewController *homeAffordanceVC = [self valueForKey:@"_homeAffordanceViewController"];
                     if (homeAffordanceVC) homeAffordanceVC.view.alpha = 0.0f;
 
@@ -851,7 +855,18 @@ static id gCachedFlipbookSpec = nil;
         if (gCurrentState == AODStateIdle) return;
         gCurrentState = AODStateIdle;
 
-        // Chu trình đánh thức: Bung sáng và nở nhẹ về 1.0, khôi phục giao diện hoàn toàn
+        // ĐÁNH THỨC MÀN HÌNH KHÓA: HIỂN THỊ LẠI TOÀN BỘ THANH TRÊN VÀ NÚT BẤM NGAY LẬP TỨC
+        @try {
+            UIViewController *statusBarVC = [self valueForKey:@"_statusBarViewController"];
+            if (statusBarVC) statusBarVC.view.alpha = 1.0f;
+
+            UIViewController *homeAffordanceVC = [self valueForKey:@"_homeAffordanceViewController"];
+            if (homeAffordanceVC) homeAffordanceVC.view.alpha = 1.0f;
+
+            UIViewController *quickActionsVC = [self valueForKey:@"_quickActionsViewController"];
+            if (quickActionsVC) quickActionsVC.view.alpha = 1.0f;
+        } @catch (NSException *e) {}
+
         [UIView animateWithDuration:0.35f delay:0.0f options:UIViewAnimationOptionCurveEaseOut animations:^{
             self.view.transform = CGAffineTransformIdentity;
             @try {
@@ -859,12 +874,6 @@ static id gCachedFlipbookSpec = nil;
                 [self _updateWallpaperEffectView];
                 [self _updateDateTimeView];
                 [self _updateComplicationsContainerView];
-
-                UIViewController *homeAffordanceVC = [self valueForKey:@"_homeAffordanceViewController"];
-                if (homeAffordanceVC) homeAffordanceVC.view.alpha = 1.0f;
-
-                UIViewController *quickActionsVC = [self valueForKey:@"_quickActionsViewController"];
-                if (quickActionsVC) quickActionsVC.view.alpha = 1.0f;
             } @catch (NSException *e) {}
         } completion:nil];
     }
@@ -956,6 +965,12 @@ static id gCachedFlipbookSpec = nil;
     if (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning) {
         gCurrentState = AODStateIdle;
         self.view.transform = CGAffineTransformIdentity;
+        
+        // Đảm bảo khi rời màn hình khóa, thanh trạng thái luôn hiển thị
+        @try {
+            UIViewController *statusBarVC = [self valueForKey:@"_statusBarViewController"];
+            if (statusBarVC) statusBarVC.view.alpha = 1.0f;
+        } @catch (NSException *e) {}
     }
 }
 
@@ -1346,18 +1361,18 @@ static id gCachedFlipbookSpec = nil;
 %end
 
 %hook SBLockScreenManager
+
 - (BOOL)shouldPreventBacklightBlankingForAlwaysOn { 
     if (shouldSuppressAODBySystemPolicies() || gCurrentState == AODStateProximityOff) return NO;
-    return isAODMasterEnabled() ? YES : %orig; 
+    // Chỉ ngăn dập tắt màn hình khi thực sự đang ở AOD tĩnh
+    return (isAODMasterEnabled() && gCurrentState == AODStateActive) ? YES : %orig; 
 }
 
 - (void)lockUIFromSource:(int)source withOptions:(id)options {
-    if (isAODMasterEnabled()) {
-        if (shouldSuppressAODBySystemPolicies()) {
-            gCurrentState = AODStateProximityOff;
-        } else {
-            gCurrentState = AODStateActive;
-        }
+    // KHÔNG gán AODStateActive ở đây!
+    // Trạng thái AOD chỉ được phép kích hoạt sau khi chu trình setBacklightState lặn sáng xong
+    if (isAODMasterEnabled() && shouldSuppressAODBySystemPolicies()) {
+        gCurrentState = AODStateProximityOff;
     }
     %orig;
 }
@@ -1366,6 +1381,7 @@ static id gCachedFlipbookSpec = nil;
     gCurrentState = AODStateIdle;
     %orig;
 }
+
 %end
 
 // -------------------------------------------------------------
