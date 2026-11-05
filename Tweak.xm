@@ -1694,6 +1694,7 @@ static void restoreLockScreenActiveUI(void) {
 
 %end // Group_PosterBoard
 
+
 //==============================================================
 // 5. TẦNG PREFERENCES: CHUẨN GỐC APPLE, TỰ HIỆN TRANG NGOÀI & BUNG MỤC CON
 //==============================================================
@@ -1711,12 +1712,16 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
     return orig_MGGetBoolAnswer ? orig_MGGetBoolAnswer(property) : NO;
 }
 
-// LỚP VIEW CONTROLLER CON: DỰNG THEO CHUẨN GỐC APPLE TRONG VIDEO
+// LỚP VIEW CONTROLLER CON: DỰNG 100% CHUẨN XÁC GIAO DIỆN GỐC TRONG VIDEO
 %subclass AODRealInternalViewController : PSListController
 
 - (void)viewDidLoad {
     %orig;
     self.title = @"Màn hình Luôn bật";
+    // Ép nạp specifiers vào bảng hiển thị để không bị màn hình đen
+    if (![self valueForKey:@"_specifiers"]) {
+        [self setValue:[self specifiers] forKey:@"_specifiers"];
+    }
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -1811,17 +1816,15 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 }
 
 - (NSMutableArray *)specifiers {
-    NSMutableArray *specs = [NSMutableArray array];
+    NSMutableArray *specs = [self valueForKey:@"_specifiers"];
+    if (specs && specs.count > 0) return specs;
 
-    // 1. NHÓM CÔNG TẮC CHÍNH CHUẨN VIDEO GỐC
-    PSSpecifier *masterGroup = [%c(PSSpecifier) preferenceSpecifierNamed:nil target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
-    [masterGroup setProperty:@"Màn hình Luôn bật làm mờ Màn hình khóa trong khi vẫn giữ hiển thị thông tin như thời gian, tiện ích và thông báo bằng cách sử dụng nguồn điện tối thiểu.\n\nKhi tắt Màn hình Luôn bật, màn hình sẽ tắt hoàn toàn khi iPhone bị khóa." forKey:@"footerText"];
-    [specs addObject:masterGroup];
+    specs = [NSMutableArray array];
 
-    PSSpecifier *masterSwitch = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình Luôn bật" target:self set:@selector(setAODVal:specifier:) get:@selector(getAODVal:) detail:Nil cell:6 edit:Nil];
-    [masterSwitch setProperty:@"AlwaysOnDisplayEnabled" forKey:@"key"];
-    [masterSwitch setProperty:@"AOD_MASTER_SWITCH_KEY" forKey:@"id"];
-    [specs addObject:masterSwitch];
+    // 1. DÒNG CHÚ THÍCH ĐẦU TRANG CHUẨN GỐC APPLE (NHƯ VIDEO)
+    PSSpecifier *topHeaderGroup = [%c(PSSpecifier) preferenceSpecifierNamed:nil target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
+    [topHeaderGroup setProperty:@"Màn hình Luôn bật làm mờ Màn hình khóa trong khi vẫn giữ hiển thị thông tin như thời gian, tiện ích và thông báo bằng cách sử dụng nguồn điện tối thiểu.\n\nMàn hình sẽ tự động tắt để tiết kiệm pin khi không sử dụng." forKey:@"footerText"];
+    [specs addObject:topHeaderGroup];
 
     Boolean valid = false;
     Boolean masterVal = CFPreferencesGetAppBooleanValue(CFSTR("AlwaysOnDisplayEnabled"), CFSTR("com.apple.BacklightServices"), &valid);
@@ -1829,30 +1832,42 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
     if (!valid) masterVal = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.jb.aodreal"), &valid);
     BOOL isMasterOn = valid ? (BOOL)masterVal : YES;
 
-    // 2. NHÓM TÙY CHỈNH (CHỈ HIỆN KHI BẬT AOD)
+    // 2. KHỐI TÙY CHỈNH (CUSTOMIZE - GỒM 3 SWITCH Y NHƯ VIDEO)
     if (isMasterOn) {
         PSSpecifier *customGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"TÙY CHỈNH" target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
         [specs addObject:customGroup];
 
-        // Switch: Hiển thị hình nền
+        // Switch 1: Hiển thị hình nền
         PSSpecifier *wpSwitch = [%c(PSSpecifier) preferenceSpecifierNamed:@"Hiển thị hình nền" target:self set:@selector(setAODVal:specifier:) get:@selector(getAODVal:) detail:Nil cell:6 edit:Nil];
         [wpSwitch setProperty:@"ShowWallpaperInAlwaysOn" forKey:@"key"];
         [wpSwitch setProperty:@"AOD_WP_KEY" forKey:@"id"];
         [specs addObject:wpSwitch];
 
-        // Switch: Làm mờ ảnh hình nền
+        // Switch 2: Làm mờ ảnh hình nền (Blur Wallpaper Photo)
         PSSpecifier *blurSwitch = [%c(PSSpecifier) preferenceSpecifierNamed:@"Làm mờ ảnh hình nền" target:self set:@selector(setAODVal:specifier:) get:@selector(getAODVal:) detail:Nil cell:6 edit:Nil];
         [blurSwitch setProperty:@"BlurWallpaperInAlwaysOn" forKey:@"key"];
         [blurSwitch setProperty:@"AOD_BLUR_KEY" forKey:@"id"];
         [specs addObject:blurSwitch];
 
-        // Switch: Hiển thị thông báo
+        // Switch 3: Hiển thị thông báo
         PSSpecifier *notifSwitch = [%c(PSSpecifier) preferenceSpecifierNamed:@"Hiển thị thông báo" target:self set:@selector(setAODVal:specifier:) get:@selector(getAODVal:) detail:Nil cell:6 edit:Nil];
         [notifSwitch setProperty:@"ShowNotificationsInAlwaysOn" forKey:@"key"];
         [notifSwitch setProperty:@"AOD_NOTIF_KEY" forKey:@"id"];
         [specs addObject:notifSwitch];
+    }
 
-        // 3. NHÓM PHẦN CỨNG TINH CHỈNH TỐI ƯU
+    // 3. KHỐI CÔNG TẮC CHÍNH (NẰM DƯỚI TÙY CHỈNH KÈM CHÚ THÍCH NHƯ VIDEO)
+    PSSpecifier *masterGroup = [%c(PSSpecifier) preferenceSpecifierNamed:nil target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
+    [masterGroup setProperty:@"Khi tắt Màn hình Luôn bật, màn hình sẽ tắt hoàn toàn khi iPhone bị khóa." forKey:@"footerText"];
+    [specs addObject:masterGroup];
+
+    PSSpecifier *masterSwitch = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình Luôn bật" target:self set:@selector(setAODVal:specifier:) get:@selector(getAODVal:) detail:Nil cell:6 edit:Nil];
+    [masterSwitch setProperty:@"AlwaysOnDisplayEnabled" forKey:@"key"];
+    [masterSwitch setProperty:@"AOD_MASTER_SWITCH_KEY" forKey:@"id"];
+    [specs addObject:masterSwitch];
+
+    // 4. KHỐI TINH CHỈNH PHẦN CỨNG BỔ SUNG (HZ & ĐỘ SÁNG)
+    if (isMasterOn) {
         PSSpecifier *hzGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"TẦN SỐ QUÉT TĨNH (1 - 5 HZ)" target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
         float curHz = getCustomAODRefreshRate();
         [hzGroup setProperty:[NSString stringWithFormat:@"Hiện tại: %.0f Hz (Tần số quét màn hình khi hiển thị AOD tĩnh)", curHz] forKey:@"footerText"];
@@ -1906,7 +1921,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 + (BOOL)isAlwaysOnDisplaySupported { return YES; }
 %end
 
-// HOOK VÀO PSLISTCONTROLLER ĐỂ TẠO KHỐI RIÊNG ĐẶT DƯỚI "ĐƯA LÊN ĐỂ BẬT" KÈM CHÚ THÍCH CHUẨN GỐC
+// HOOK VÀO PSLISTCONTROLLER ĐỂ CHÈN ĐÚNG VỊ TRÍ VÀ HIỂN THỊ TRANG CON
 %hook PSListController
 
 - (NSMutableArray *)loadSpecifiersFromPlistName:(NSString *)name target:(id)target bundle:(NSBundle *)bundle {
@@ -1917,20 +1932,13 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
         [NSStringFromClass([self class]) containsString:@"Display"]) {
         
         static NSString *const kAODRowID = @"ALWAYS_ON_DISPLAY_ROW_ID";
-        static NSString *const kAODGroupID = @"ALWAYS_ON_DISPLAY_STANDALONE_GROUP";
-
         for (PSSpecifier *s in specs) {
             if ([[s propertyForKey:@"id"] isEqualToString:kAODRowID]) {
                 return specs;
             }
         }
 
-        // Tạo một Group độc lập có chú thích footer ở dưới
-        PSSpecifier *standaloneGroup = [%c(PSSpecifier) preferenceSpecifierNamed:nil target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
-        [standaloneGroup setProperty:kAODGroupID forKey:@"id"];
-        [standaloneGroup setProperty:@"Màn hình Luôn bật làm mờ Màn hình khóa trong khi vẫn giữ hiển thị thông tin như thời gian, tiện ích và thông báo bằng cách sử dụng nguồn điện tối thiểu." forKey:@"footerText"];
-
-        // Hàng dẫn vào
+        // Hàng dẫn vào trang AOD
         PSSpecifier *aodLink = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình Luôn bật"
                                                                   target:self 
                                                                      set:NULL 
@@ -1942,8 +1950,10 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
         [aodLink setProperty:NSStringFromSelector(@selector(openAODRealSubpage:)) forKey:@"action"];
         [aodLink setProperty:@YES forKey:@"enabled"];
 
-        // Tìm vị trí kết thúc của khối chứa "Đưa lên để bật"
+        // Định vị chính xác hàng "Đưa lên để bật"
         NSInteger rtwIndex = -1;
+        NSInteger groupSpecIndex = -1;
+
         for (NSInteger i = 0; i < (NSInteger)specs.count; i++) {
             PSSpecifier *cur = [specs objectAtIndex:i];
             NSString *sid = [[cur propertyForKey:@"id"] description].uppercaseString;
@@ -1953,12 +1963,24 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
             }
         }
 
+        // Chèn vào vị trí kế tiếp sau "Đưa lên để bật"
         if (rtwIndex >= 0) {
-            // Chèn ngay sau "Đưa lên để bật" một khối độc lập chuẩn như Apple
-            [specs insertObject:standaloneGroup atIndex:rtwIndex + 1];
-            [specs insertObject:aodLink atIndex:rtwIndex + 2];
+            [specs insertObject:aodLink atIndex:rtwIndex + 1];
+
+            // Cập nhật footerText của nhóm chứa hàng
+            for (NSInteger j = rtwIndex; j >= 0; j--) {
+                PSSpecifier *s = [specs objectAtIndex:j];
+                id cellVal = [s propertyForKey:@"cell"];
+                if ([cellVal respondsToSelector:@selector(intValue)] && [cellVal intValue] == 0) {
+                    groupSpecIndex = j;
+                    break;
+                }
+            }
+            if (groupSpecIndex >= 0) {
+                PSSpecifier *targetGroup = [specs objectAtIndex:groupSpecIndex];
+                [targetGroup setProperty:@"Màn hình Luôn bật làm mờ Màn hình khóa trong khi vẫn giữ hiển thị thông tin như thời gian, tiện ích và thông báo bằng cách sử dụng nguồn điện tối thiểu." forKey:@"footerText"];
+            }
         } else {
-            [specs addObject:standaloneGroup];
             [specs addObject:aodLink];
         }
     }
@@ -1971,7 +1993,6 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 
     if ([NSStringFromClass([self class]) containsString:@"Display"]) {
         static NSString *const kAODRowID = @"ALWAYS_ON_DISPLAY_ROW_ID";
-        static NSString *const kAODGroupID = @"ALWAYS_ON_DISPLAY_STANDALONE_GROUP";
 
         BOOL exists = NO;
         for (PSSpecifier *s in specs) {
@@ -1983,11 +2004,6 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 
         if (!exists && specs) {
             NSMutableArray *mSpecs = [specs mutableCopy];
-
-            PSSpecifier *standaloneGroup = [%c(PSSpecifier) preferenceSpecifierNamed:nil target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
-            [standaloneGroup setProperty:kAODGroupID forKey:@"id"];
-            [standaloneGroup setProperty:@"Màn hình Luôn bật làm mờ Màn hình khóa trong khi vẫn giữ hiển thị thông tin như thời gian, tiện ích và thông báo bằng cách sử dụng nguồn điện tối thiểu." forKey:@"footerText"];
-
             PSSpecifier *aodLink = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình Luôn bật"
                                                                       target:self 
                                                                          set:NULL 
@@ -2000,6 +2016,8 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
             [aodLink setProperty:@YES forKey:@"enabled"];
 
             NSInteger rtwIndex = -1;
+            NSInteger groupSpecIndex = -1;
+
             for (NSInteger i = 0; i < (NSInteger)mSpecs.count; i++) {
                 NSString *sid = [[[mSpecs objectAtIndex:i] propertyForKey:@"id"] description].uppercaseString;
                 if ([sid containsString:@"RAISE_TO_WAKE"] || [sid containsString:@"WAKE"]) {
@@ -2009,10 +2027,21 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
             }
 
             if (rtwIndex >= 0) {
-                [mSpecs insertObject:standaloneGroup atIndex:rtwIndex + 1];
-                [mSpecs insertObject:aodLink atIndex:rtwIndex + 2];
+                [mSpecs insertObject:aodLink atIndex:rtwIndex + 1];
+
+                for (NSInteger j = rtwIndex; j >= 0; j--) {
+                    PSSpecifier *s = [mSpecs objectAtIndex:j];
+                    id cellVal = [s propertyForKey:@"cell"];
+                    if ([cellVal respondsToSelector:@selector(intValue)] && [cellVal intValue] == 0) {
+                        groupSpecIndex = j;
+                        break;
+                    }
+                }
+                if (groupSpecIndex >= 0) {
+                    PSSpecifier *targetGroup = [mSpecs objectAtIndex:groupSpecIndex];
+                    [targetGroup setProperty:@"Màn hình Luôn bật làm mờ Màn hình khóa trong khi vẫn giữ hiển thị thông tin như thời gian, tiện ích và thông báo bằng cách sử dụng nguồn điện tối thiểu." forKey:@"footerText"];
+                }
             } else {
-                [mSpecs addObject:standaloneGroup];
                 [mSpecs addObject:aodLink];
             }
 
@@ -2031,9 +2060,10 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
         if ([subController respondsToSelector:@selector(setSpecifier:)]) {
             [subController performSelector:@selector(setSpecifier:) withObject:spec];
         }
-        
-        // Buộc nạp danh sách specifiers để hiển thị đầy đủ giao diện ngay lập tức
-        [subController specifiers];
+
+        // Nạp và đồng bộ specifiers trước khi push để bảng hiển thị đầy đủ ngay lập tức
+        NSMutableArray *loadedSpecs = [subController specifiers];
+        [subController setValue:loadedSpecs forKey:@"_specifiers"];
 
         if (self.navigationController) {
             [self.navigationController pushViewController:subController animated:YES];
