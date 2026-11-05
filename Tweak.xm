@@ -1942,7 +1942,6 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
         for (NSInteger i = 0; i < (NSInteger)specs.count; i++) {
             PSSpecifier *cur = [specs objectAtIndex:i];
             NSString *sid = [[cur propertyForKey:@"id"] description].uppercaseString;
-            
             if ([sid containsString:@"RAISE_TO_WAKE"] || [sid containsString:@"WAKE"]) {
                 rtwIndex = i;
                 break;
@@ -2041,13 +2040,12 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 
 %new
 - (void)openAODRealSubpage:(PSSpecifier *)spec {
-    PSListController *subController = [[%c(AODRealInternalViewController) alloc] init];
+    UIViewController *subController = [[%c(AODRealInternalViewController) alloc] init];
     if (subController) {
-        subController.rootController = self.rootController;
-        subController.parentController = self;
-        if ([self respondsToSelector:@selector(pushController:)]) {
-            [self pushController:subController];
-        } else if (self.navigationController) {
+        if ([subController respondsToSelector:@selector(setSpecifier:)]) {
+            [subController performSelector:@selector(setSpecifier:) withObject:spec];
+        }
+        if (self.navigationController) {
             [self.navigationController pushViewController:subController animated:YES];
         }
     }
