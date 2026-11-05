@@ -2188,7 +2188,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 //==============================================================
 
 static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    loadAODPreferences();[span_0](start_span)[span_0](end_span)
+    loadAODPreferences();
 }
 
 %ctor {
@@ -2199,7 +2199,7 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
         NSString *processName = [[NSProcessInfo processInfo] processName];
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
 
-        loadAODPreferences();[span_1](start_span)[span_1](end_span)
+        loadAODPreferences();
 
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
@@ -2215,8 +2215,8 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
             [processName isEqualToString:@"SpringBoard"] || 
             [processName.lowercaseString isEqualToString:@"springboard"]) {
             
-            gIsSpringBoardProcess = YES;[span_2](start_span)[span_2](end_span)
-            gCurrentState = AODStateIdle;[span_3](start_span)[span_3](end_span)
+            gIsSpringBoardProcess = YES;
+            gCurrentState = AODStateIdle;
             %init(Group_SpringBoard);
             
         } else if ([bundleID isEqualToString:@"com.apple.PosterBoard"] || 
