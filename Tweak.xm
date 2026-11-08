@@ -36,7 +36,7 @@ static BOOL gCachedWallpaperEnabled = YES;
 static BOOL gCachedBlurWallpaperEnabled = YES;
 static BOOL gCachedNotificationsEnabled = YES;
 static float gCachedCustomHz = 1.0f; // Mặc định 1.0 Hz
-static float gCachedBrightnessFactor = 0.005f;
+static float gCachedBrightnessFactor = 0.025f;
 
 static inline void loadAODPreferences(void) {
     Boolean valid = false;
