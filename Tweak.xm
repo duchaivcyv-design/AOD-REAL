@@ -540,24 +540,40 @@ static void aodCollectViews(UIView *root, NSArray<NSString *> *needles, NSMutabl
     for (UIView *sub in root.subviews) aodCollectViews(sub, needles, out);
 }
 
-// Ẩn/hiện thanh trên (status bar), nút home và phím tắt dưới
+// Tìm view màn hình khóa: thử tham chiếu đã lưu, nếu không có thì tìm theo tên lớp trong mọi cửa sổ
+static UIView *aodLockRoot(UIView *fallback) {
+    if (fallback) return fallback;
+    for (UIWindow *w in [UIApplication sharedApplication].windows) {
+        NSMutableArray *found = [NSMutableArray array];
+        aodCollectViews(w, @[@"CSCoverSheetView", @"CoverSheetView", @"SBDashBoard"], found);
+        if (found.count) return found.firstObject;
+    }
+    return nil;
+}
+
+// Ẩn/hiện thanh trên, nút home, phím tắt dưới: tìm trong TẤT CẢ cửa sổ (chúng nằm ngoài cây view màn khóa)
 static void aodSetChromeHidden(UIView *root, BOOL hidden) {
     NSMutableArray *views = [NSMutableArray array];
-    aodCollectViews(root, @[@"StatusBar", @"HomeAffordance", @"QuickAction"], views);
+    for (UIWindow *w in [UIApplication sharedApplication].windows) {
+        aodCollectViews(w, @[@"StatusBar", @"HomeAffordance", @"QuickAction"], views);
+    }
+    if (root) aodCollectViews(root, @[@"StatusBar", @"HomeAffordance", @"QuickAction"], views);
     for (UIView *v in views) {
         [UIView animateWithDuration:0.2 animations:^{ v.alpha = hidden ? 0.0f : 1.0f; }];
     }
 }
 
-// Lặn: co nhẹ toàn bộ lớp khóa 0.985 và làm mờ hình nền; đảo lại khi đánh thức
+// Lặn: đồng hồ/widget co nhẹ về 0.9, hình nền mờ về 0.55; đảo lại khi đánh thức
 static void aodApplyDim(UIView *root, BOOL dim, NSTimeInterval duration) {
     if (!root) return;
+    NSMutableArray *clock = [NSMutableArray array];
+    aodCollectViews(root, @[@"DateView", @"Complication", @"DateTime", @"Clock", @"Widget"], clock);
     NSMutableArray *wallpaper = [NSMutableArray array];
     aodCollectViews(root, @[@"Wallpaper", @"BackgroundView"], wallpaper);
     [UIView animateWithDuration:duration delay:0.0
                         options:UIViewAnimationOptionCurveEaseInOut
                      animations:^{
-        root.transform = dim ? CGAffineTransformMakeScale(0.985f, 0.985f) : CGAffineTransformIdentity;
+        for (UIView *c in clock) c.transform = dim ? CGAffineTransformMakeScale(0.9f, 0.9f) : CGAffineTransformIdentity;
         for (UIView *w in wallpaper) w.alpha = dim ? 0.55f : 1.0f;
     } completion:nil];
 }
@@ -932,8 +948,8 @@ static id gCachedFlipbookSpec = nil;
     if (inactive) return;
 
     AODSetState(AODStateIdle);
-    aodApplyDim(self.view, NO, 0.35);
-    aodSetChromeHidden(self.view, NO);
+    aodApplyDim(aodLockRoot(self.view), NO, 0.35);
+    aodSetChromeHidden(aodLockRoot(self.view), NO);
 }
 
 // BẢO VỆ DANH SÁCH THÔNG BÁO VÀ STATUS BAR KHI Ở IDLE
@@ -977,6 +993,15 @@ static id gCachedFlipbookSpec = nil;
         effectView = [self valueForKey:@"_wallpaperEffectView"];
         bgView = [self valueForKey:@"_backgroundView"];
     } @catch (NSException *e) {}
+    // Dự phòng: nếu tên biến không có trên bản iOS này, tìm lớp theo tên view
+    if (!floatingLayer || !bgView) {
+        NSMutableArray *fl = [NSMutableArray array];
+        NSMutableArray *bl = [NSMutableArray array];
+        aodCollectViews(self.view, @[@"Floating"], fl);
+        aodCollectViews(self.view, @[@"BackgroundView"], bl);
+        if (!floatingLayer) floatingLayer = fl.firstObject;
+        if (!bgView) bgView = bl.firstObject;
+    }
 
     if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
         if (!isWallpaperEnabled()) {
@@ -989,7 +1014,9 @@ static id gCachedFlipbookSpec = nil;
             }
             self.view.backgroundColor = [UIColor blackColor];
         } else {
-            if (floatingLayer) floatingLayer.alpha = 1.0f;
+            // Trong AOD: ẩn lớp trên (hình nền do tweak ghi lên / động) để không bị đen,
+            // hiển thị lớp dưới là hình nền thật. Khi đánh thức, lớp trên được trả lại ở nhánh else bên dưới.
+            if (floatingLayer) floatingLayer.alpha = 0.0f;
             if (bgView) bgView.alpha = 1.0f;
             if (effectView) {
                 effectView.hidden = NO;
@@ -1252,7 +1279,7 @@ static id gCachedFlipbookSpec = nil;
                 AODSetState(AODStateTransitioning);
                 AODLOG(@"lock -> begin AOD transition");
 
-                UIView *csRoot = gCoverSheetVC.view;
+                UIView *csRoot = aodLockRoot(gCoverSheetVC.view);
                 dispatch_async(dispatch_get_main_queue(), ^{
                     aodApplyDim(csRoot, YES, 0.45);
                     aodSetChromeHidden(csRoot, YES);
@@ -1272,7 +1299,7 @@ static id gCachedFlipbookSpec = nil;
             // Mở màn hình khóa sáng hoặc nhấc máy: LẬP TỨC TRẢ VỀ IDLE VÀ KHÔI PHỤC GIAO DIỆN
             AODSetState(AODStateIdle);
             gCurrentAODProgress = 1.0f;
-            UIView *wakeRoot = gCoverSheetVC.view;
+            UIView *wakeRoot = aodLockRoot(gCoverSheetVC.view);
                 dispatch_async(dispatch_get_main_queue(), ^{
                     aodApplyDim(wakeRoot, NO, 0.35);
                     aodSetChromeHidden(wakeRoot, NO);
@@ -1922,6 +1949,50 @@ static void initGroupPreferencesExplicitly(void) {
 }
 
 // Hook đón đầu tại tầng PSListController để kích hoạt ngay khi trang hiển thị nạp
+// CHÈN DÒNG KHÔNG PHỤ THUỘC TÊN LỚP: nhận ra trang Màn hình & Độ sáng qua dòng "Đưa lên để bật" (có trong ảnh bạn gửi)
+%group Group_PreferencesRow
+
+%hook PSListController
+
+- (NSMutableArray *)specifiers {
+    NSMutableArray *specs = %orig;
+    if (!specs) return specs;
+
+    NSInteger raiseIdx = -1;
+    BOOL hasRow = NO;
+    for (NSInteger i = 0; i < (NSInteger)specs.count; i++) {
+        PSSpecifier *sp = specs[i];
+        if ([[sp propertyForKey:@"id"] isEqualToString:@"AOD_REAL_ROW"]) hasRow = YES;
+        if (raiseIdx < 0 && [[sp name] isEqualToString:@"Đưa lên để bật"]) raiseIdx = i;
+    }
+    if (hasRow || raiseIdx < 0) return specs;
+
+    Class detailClass = aodDetailClass();
+    if (!detailClass) return specs;
+
+    PSSpecifier *row = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình luôn bật"
+                                                          target:self
+                                                             set:NULL
+                                                             get:@selector(getAODMasterStatusText:)
+                                                          detail:detailClass
+                                                            cell:2 // PSLinkCell
+                                                            edit:Nil];
+    [row setProperty:@"AOD_REAL_ROW" forKey:@"id"];
+    [row setProperty:@YES forKey:@"isController"];
+    [row setProperty:@YES forKey:@"enabled"];
+    [specs insertObject:row atIndex:raiseIdx + 1];
+    return specs;
+}
+
+%new
+- (id)getAODMasterStatusText:(PSSpecifier *)spec {
+    return aodReadBool(CFSTR("enabled"), YES) ? @"Bật" : @"Tắt";
+}
+
+%end
+
+%end // Group_PreferencesRow
+
 %group Group_PreferencesLoader
 %hook PSListController
 - (void)viewDidLoad {
@@ -1985,6 +2056,7 @@ static void initGroupPreferencesExplicitly(void) {
             dlopen("/System/Library/PrivateFrameworks/Settings/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);
 
             // 3. Khởi tạo hook trực tiếp nếu class đã có, hoặc dùng loader đón đầu khi view load
+            %init(Group_PreferencesRow);
             %init(Group_PreferencesLoader);   // luôn cài loader; loader sẽ thử lại khi trang nạp
             initGroupPreferencesExplicitly();
         }
