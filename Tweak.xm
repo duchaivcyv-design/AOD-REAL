@@ -185,6 +185,15 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
     return gSuppressCache;
 }
 
+// QUY TẮC DUY NHẤT: khi hệ thống muốn TẮT đèn (state 0 / blanked / power off),
+// AOD luôn được giữ. Ngoại lệ duy nhất: đút túi/úp máy (tiệm cận) và pin cực thấp/Low Power.
+static inline BOOL aodMustStayOn(void) {
+    if (!isAODMasterEnabled()) return NO;
+    if (gCurrentState == AODStateProximityOff) return NO;
+    if (shouldSuppressAODBySystemPolicies()) return NO;
+    return YES;
+}
+
 //==============================================================
 // 1. KHAI BÁO CÁC LỚP VÀ GIAO DIỆN HỆ THỐNG
 //==============================================================
@@ -526,21 +535,10 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 %hook CBController
 
 - (void)setPowerState:(BOOL)state completion:(id)completion {
-    if (isAODMasterEnabled()) {
-        if (!state) {
-            if (gCurrentState == AODStateProximityOff || shouldSuppressAODBySystemPolicies()) {
-                %orig(NO, completion);
-                return;
-            }
-            if (aodInAODFlow()) {
-                %orig(YES, completion);
-                return;
-            }
-        } else {
-            if (gCurrentState == AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) {
-                AODSetState(AODStateActive);
-            }
-        }
+    if (!state && aodMustStayOn()) {
+        AODLOG(@"power-off request held -> AOD");
+        %orig(YES, completion);
+        return;
     }
     %orig(state, completion);
 }
@@ -551,14 +549,14 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 %hook CAWindowServerDisplay
 
 - (float)refreshRate {
-    if (isAODMasterEnabled() && aodInAODFlow()) {
+    if (aodMustStayOn()) {
         return getCustomAODRefreshRate(); // 1.0f -> 5.0f Hz
     }
     return %orig;
 }
 
 - (void)setRefreshRate:(float)rate {
-    if (isAODMasterEnabled() && aodInAODFlow()) {
+    if (aodMustStayOn()) {
         %orig(getCustomAODRefreshRate());
         return;
     }
@@ -566,14 +564,14 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (BOOL)blankingRemovesPower {
-    if (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
+    if (aodMustStayOn()) {
         return NO;
     }
     return %orig;
 }
 
 - (void)setBlankingRemovesPower:(BOOL)val {
-    if (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
+    if (aodMustStayOn()) {
         %orig(NO);
         return;
     }
@@ -581,14 +579,14 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (BOOL)disabled {
-    if (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
+    if (aodMustStayOn()) {
         return NO;
     }
     return %orig;
 }
 
 - (void)setDisabled:(BOOL)val {
-    if (isAODMasterEnabled() && val && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
+    if (val && aodMustStayOn()) {
         %orig(NO);
         return;
     }
@@ -596,14 +594,14 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (BOOL)isBlanked {
-    if (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
+    if (aodMustStayOn()) {
         return NO;
     }
     return %orig;
 }
 
 - (void)setBlanked:(BOOL)blanked {
-    if (isAODMasterEnabled() && blanked && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
+    if (blanked && aodMustStayOn()) {
         %orig(NO);
         return;
     }
@@ -611,14 +609,14 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (BOOL)disablesUpdates {
-    if (isAODMasterEnabled() && aodInAODFlow()) {
+    if (aodMustStayOn()) {
         return NO;
     }
     return %orig;
 }
 
 - (void)setDisablesUpdates:(BOOL)val {
-    if (isAODMasterEnabled() && aodInAODFlow()) {
+    if (aodMustStayOn()) {
         %orig(NO);
         return;
     }
@@ -626,7 +624,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (BOOL)isFlipBookActive {
-    if (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
+    if (aodMustStayOn()) {
         return YES;
     }
     return %orig;
@@ -648,7 +646,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (void)setFlipBookSuppressed:(BOOL)suppressed {
-    if (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies() && suppressed) {
+    if (aodMustStayOn() && suppressed) {
         %orig(NO);
         return;
     }
@@ -656,7 +654,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (void)powerStateDidChange:(id)arg1 {
-    if (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
+    if (aodMustStayOn()) {
         return;
     }
     %orig(arg1);
@@ -666,13 +664,13 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 
 %hook BKDisplayRenderOverlay
 - (BOOL)disablesDisplayBlanking { 
-    return (isAODMasterEnabled() && aodInAODFlow()) ? YES : %orig; 
+    return (aodMustStayOn()) ? YES : %orig; 
 }
 %end
 
 %hook BKDisplayManager
 - (void)setBlanked:(BOOL)blanked withReason:(id)reason {
-    if (isAODMasterEnabled() && blanked && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
+    if (blanked && aodMustStayOn()) {
         %orig(NO, reason);
         return;
     }
@@ -728,14 +726,14 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 %hook BLSHFlipbookSpecification
 
 - (double)framesPerSecond {
-    if (isAODMasterEnabled() && aodInAODFlow()) {
+    if (aodMustStayOn()) {
         return (double)getCustomAODRefreshRate();
     }
     return %orig;
 }
 
 - (double)minimumGapDuration {
-    if (isAODMasterEnabled() && aodInAODFlow()) {
+    if (aodMustStayOn()) {
         double fps = (double)getCustomAODRefreshRate();
         return (fps <= 1.0) ? 1.0 : (1.0 / fps);
     }
@@ -754,7 +752,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (void)setSuppressed:(BOOL)suppressed {
-    if (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies() && suppressed) {
+    if (aodMustStayOn() && suppressed) {
         %orig(NO);
         return;
     }
@@ -766,7 +764,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (void)suspendForReason:(id)reason {
-    if (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
+    if (aodMustStayOn()) {
         return;
     }
     %orig(reason);
@@ -781,7 +779,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (BOOL)isAlwaysOnActive { 
-    return (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) ? YES : %orig; 
+    return (aodMustStayOn()) ? YES : %orig; 
 }
 
 - (BOOL)isClientActive { 
@@ -1279,7 +1277,7 @@ static id gCachedFlipbookSpec = nil;
     if (isAODMasterEnabled()) {
         if (state == 0) {
             // Chu trình khóa màn hình: Bắt đầu chuyển cảnh vào AOD
-            if (gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) {
+            if (aodMustStayOn()) {
                 AODSetState(AODStateTransitioning);
                 AODLOG(@"lock -> begin AOD transition");
 
@@ -1961,19 +1959,34 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
     loadAODPreferences();
 }
 
-static void initGroupPreferencesExplicitly(void) {
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        dlopen("/System/Library/PreferenceBundles/Display.bundle/Display", RTLD_NOW | RTLD_GLOBAL);
-        dlopen("/System/Library/PrivateFrameworks/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);
-        dlopen("/System/Library/PrivateFrameworks/Settings/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);
+static BOOL gPreferencesGroupReady = NO;
 
-        Class dbsClass = objc_getClass("DBSMainDisplayPreferencesController");
-        Class aodClass = objc_getClass("DBSAlwaysOnViewController");
-        %init(Group_Preferences, 
-              DBSMainDisplayPreferencesController = dbsClass,
-              DBSAlwaysOnViewController = aodClass);
-    });
+// Khởi tạo hook trang Màn hình & Độ sáng. Chỉ đánh dấu xong khi đã có đủ lớp;
+// nếu chưa có thì lần sau (khi trang nạp) sẽ thử lại — không dùng dispatch_once.
+static void initGroupPreferencesExplicitly(void) {
+    if (gPreferencesGroupReady) return;
+
+    static const char *candidates[] = {
+        "/System/Library/PreferenceBundles/DisplayAndBrightnessSettings.bundle/DisplayAndBrightnessSettings",
+        "/System/Library/PreferenceBundles/Display.bundle/Display",
+        "/System/Library/PrivateFrameworks/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings",
+        "/System/Library/PrivateFrameworks/Settings/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings",
+    };
+    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+        dlopen(candidates[i], RTLD_NOW | RTLD_GLOBAL);
+    }
+
+    Class dbsClass = objc_getClass("DBSMainDisplayPreferencesController");
+    Class aodClass = objc_getClass("DBSAlwaysOnViewController");
+    if (!dbsClass || !aodClass) {
+        AODLOG(@"Display classes not ready (main=%@ aod=%@), will retry", dbsClass, aodClass);
+        return;
+    }
+    %init(Group_Preferences,
+          DBSMainDisplayPreferencesController = dbsClass,
+          DBSAlwaysOnViewController = aodClass);
+    gPreferencesGroupReady = YES;
+    AODLOG(@"Preferences group ready");
 }
 
 // Hook đón đầu tại tầng PSListController để kích hoạt ngay khi trang hiển thị nạp
@@ -1983,7 +1996,7 @@ static void initGroupPreferencesExplicitly(void) {
     %orig;
     if ([self isKindOfClass:objc_getClass("DBSMainDisplayPreferencesController")]) {
         initGroupPreferencesExplicitly();
-        [self reloadSpecifiers];
+        if (gPreferencesGroupReady) [self reloadSpecifiers];
     }
 }
 %end
@@ -2040,11 +2053,8 @@ static void initGroupPreferencesExplicitly(void) {
             dlopen("/System/Library/PrivateFrameworks/Settings/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);
 
             // 3. Khởi tạo hook trực tiếp nếu class đã có, hoặc dùng loader đón đầu khi view load
-            if (objc_getClass("DBSMainDisplayPreferencesController")) {
-                initGroupPreferencesExplicitly();
-            } else {
-                %init(Group_PreferencesLoader);
-            }
+            %init(Group_PreferencesLoader);   // luôn cài loader; loader sẽ thử lại khi trang nạp
+            initGroupPreferencesExplicitly();
         }
     }
 }
