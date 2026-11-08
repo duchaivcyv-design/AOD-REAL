@@ -29,6 +29,9 @@ jobs:
           mkdir -p theos/sdks
           curl -fsSL https://github.com/theos/sdks/archive/refs/heads/master.tar.gz | tar -xz --strip-components=1 -C theos/sdks
 
+      - name: Install ldid
+        run: brew install ldid
+
       - name: Build rootless package
         env:
           THEOS: ${{ github.workspace }}/theos
