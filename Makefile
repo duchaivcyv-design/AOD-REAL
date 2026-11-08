@@ -7,9 +7,10 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = AODREAL
 AODREAL_FILES = Tweak.xm
-AODREAL_FRAMEWORKS = UIKit Foundation QuartzCore IOKit CoreGraphics
+AODREAL_FRAMEWORKS = UIKit Foundation QuartzCore CoreGraphics
 AODREAL_PRIVATE_FRAMEWORKS = Preferences BacklightServices PosterKit ClockKit BackBoardServices
-AODREAL_CFLAGS = -fobjc-arc -Wno-unused-variable -Wno-unused-function -Wno-deprecated-declarations -Wno-objc-method-access
+AODREAL_CFLAGS = -fobjc-arc -fno-modules -Wno-module-import-in-extern-c -Wno-unused-variable -Wno-unused-function -Wno-deprecated-declarations -Wno-objc-method-access
+AODREAL_CXXFLAGS = -fno-modules -Wno-module-import-in-extern-c
 AODREAL_LDFLAGS = -Wl,-undefined,dynamic_lookup
 
 include $(THEOS_MAKE_PATH)/tweak.mk
