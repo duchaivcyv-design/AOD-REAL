@@ -199,6 +199,7 @@ static inline BOOL aodMustStayOn(void) {
 //==============================================================
 
 @interface PSSpecifier : NSObject
+- (NSString *)name;
 + (instancetype)preferenceSpecifierNamed:(NSString *)title target:(id)target set:(SEL)set get:(SEL)get detail:(Class)detail cell:(long long)cell edit:(Class)edit;
 - (void)setProperty:(id)value forKey:(NSString *)key;
 - (id)propertyForKey:(NSString *)key;
@@ -528,6 +529,38 @@ static inline BOOL aodMustStayOn(void) {
 //==============================================================
 // 2. TẦNG DRIVER & PHẦN CỨNG (BACKBOARDD) - ĐÃ TỐI ƯU CHỐNG JETSAM OOM
 //==============================================================
+
+// ===== HÌNH ẢNH AOD: tự tìm view theo tên lớp, không phụ thuộc khóa riêng của Apple =====
+static void aodCollectViews(UIView *root, NSArray<NSString *> *needles, NSMutableArray *out) {
+    if (!root) return;
+    NSString *cn = NSStringFromClass([root class]);
+    for (NSString *n in needles) {
+        if ([cn rangeOfString:n].location != NSNotFound) { [out addObject:root]; break; }
+    }
+    for (UIView *sub in root.subviews) aodCollectViews(sub, needles, out);
+}
+
+// Ẩn/hiện thanh trên (status bar), nút home và phím tắt dưới
+static void aodSetChromeHidden(UIView *root, BOOL hidden) {
+    NSMutableArray *views = [NSMutableArray array];
+    aodCollectViews(root, @[@"StatusBar", @"HomeAffordance", @"QuickAction"], views);
+    for (UIView *v in views) {
+        [UIView animateWithDuration:0.2 animations:^{ v.alpha = hidden ? 0.0f : 1.0f; }];
+    }
+}
+
+// Lặn: co nhẹ toàn bộ lớp khóa 0.985 và làm mờ hình nền; đảo lại khi đánh thức
+static void aodApplyDim(UIView *root, BOOL dim, NSTimeInterval duration) {
+    if (!root) return;
+    NSMutableArray *wallpaper = [NSMutableArray array];
+    aodCollectViews(root, @[@"Wallpaper", @"BackgroundView"], wallpaper);
+    [UIView animateWithDuration:duration delay:0.0
+                        options:UIViewAnimationOptionCurveEaseInOut
+                     animations:^{
+        root.transform = dim ? CGAffineTransformMakeScale(0.985f, 0.985f) : CGAffineTransformIdentity;
+        for (UIView *w in wallpaper) w.alpha = dim ? 0.55f : 1.0f;
+    } completion:nil];
+}
 
 %group Group_Backboardd
 
@@ -895,74 +928,12 @@ static id gCachedFlipbookSpec = nil;
         return;
     }
 
-    if (inactive) {
-        if (gCurrentState == AODStateActive) return;
-        AODSetState(AODStateTransitioning);
+    // Lệnh lặn do hook backlight điều khiển; không chạy song song ở đây để tránh đánh nhau
+    if (inactive) return;
 
-        // Chu trình bấm khóa: Màn hình co nhẹ 0.985 và lặn dịu sáng trong 0.45s
-        [UIView animateWithDuration:0.45f delay:0.0f options:UIViewAnimationOptionCurveEaseInOut animations:^{
-            self.view.transform = CGAffineTransformMakeScale(0.985f, 0.985f);
-            @try {
-                [self _animateView:self.view toWhitePointReduced:YES withDuration:0.45f withDispatchGroup:nil];
-                [self _updateWallpaperEffectView];
-                [self _updateDateTimeView];
-                [self _updateComplicationsContainerView];
-            } @catch (NSException *e) {}
-        } completion:^(BOOL finished) {
-            if (finished && gCurrentState == AODStateTransitioning) {
-                AODLOG(@"transition finished -> AODStateActive");
-                // ĐÃ VÀO AOD HOÀN TOÀN -> LÚC NÀY MỚI ĐƯỢC PHÉP ẨN STATUS BAR VÀ PHÍM TẮT
-                AODSetState(AODStateActive);
-                @try {
-                    UIViewController *statusBarVC = [self valueForKey:@"_statusBarViewController"];
-                    if (statusBarVC) {
-                        [UIView animateWithDuration:0.2f animations:^{
-                            statusBarVC.view.alpha = 0.0f;
-                        }];
-                    }
-
-                    UIViewController *homeAffordanceVC = [self valueForKey:@"_homeAffordanceViewController"];
-                    if (homeAffordanceVC) homeAffordanceVC.view.alpha = 0.0f;
-
-                    UIViewController *quickActionsVC = [self valueForKey:@"_quickActionsViewController"];
-                    if (quickActionsVC) quickActionsVC.view.alpha = 0.0f;
-                } @catch (NSException *e) {}
-            }
-        }];
-    } else {
-        // ĐÁNH THỨC SÁNG MÀN HÌNH KHÓA: HIỆN LẠI ĐẦY ĐỦ 100% GIAO DIỆN NGAY LẬP TỨC
-        AODSetState(AODStateIdle);
-
-        @try {
-            UIViewController *statusBarVC = [self valueForKey:@"_statusBarViewController"];
-            if (statusBarVC) {
-                statusBarVC.view.alpha = 1.0f;
-                statusBarVC.view.hidden = NO;
-            }
-
-            UIViewController *homeAffordanceVC = [self valueForKey:@"_homeAffordanceViewController"];
-            if (homeAffordanceVC) {
-                homeAffordanceVC.view.alpha = 1.0f;
-                homeAffordanceVC.view.hidden = NO;
-            }
-
-            UIViewController *quickActionsVC = [self valueForKey:@"_quickActionsViewController"];
-            if (quickActionsVC) {
-                quickActionsVC.view.alpha = 1.0f;
-                quickActionsVC.view.hidden = NO;
-            }
-        } @catch (NSException *e) {}
-
-        [UIView animateWithDuration:0.35f delay:0.0f options:UIViewAnimationOptionCurveEaseOut animations:^{
-            self.view.transform = CGAffineTransformIdentity;
-            @try {
-                [self _animateView:self.view toWhitePointReduced:NO withDuration:0.35f withDispatchGroup:nil];
-                [self _updateWallpaperEffectView];
-                [self _updateDateTimeView];
-                [self _updateComplicationsContainerView];
-            } @catch (NSException *e) {}
-        } completion:nil];
-    }
+    AODSetState(AODStateIdle);
+    aodApplyDim(self.view, NO, 0.35);
+    aodSetChromeHidden(self.view, NO);
 }
 
 // BẢO VỆ DANH SÁCH THÔNG BÁO VÀ STATUS BAR KHI Ở IDLE
@@ -1281,20 +1252,17 @@ static id gCachedFlipbookSpec = nil;
                 AODSetState(AODStateTransitioning);
                 AODLOG(@"lock -> begin AOD transition");
 
-                if (gCoverSheetVC && [gCoverSheetVC respondsToSelector:@selector(_updateAppearanceForAODTransitionToInactive:)]) {
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        [gCoverSheetVC _updateAppearanceForAODTransitionToInactive:YES];
-                    });
-                } else {
-                    AODLOG(@"no coversheet hook available, relying on safety net");
-                }
-
-                // Lưới an toàn: không để trạng thái kẹt ở Transitioning nếu hoạt ảnh không hoàn tất
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)),
+                UIView *csRoot = gCoverSheetVC.view;
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    aodApplyDim(csRoot, YES, 0.45);
+                    aodSetChromeHidden(csRoot, YES);
+                });
+                // Hoàn tất vào AOD sau 0.45s, luôn chạy (không còn phụ thuộc hoạt ảnh của Apple)
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)),
                                dispatch_get_main_queue(), ^{
                     if (gCurrentState == AODStateTransitioning) {
                         AODSetState(AODStateActive);
-                        AODLOG(@"safety net -> AODStateActive");
+                        AODLOG(@"AOD active");
                     }
                 });
 
@@ -1304,11 +1272,11 @@ static id gCachedFlipbookSpec = nil;
             // Mở màn hình khóa sáng hoặc nhấc máy: LẬP TỨC TRẢ VỀ IDLE VÀ KHÔI PHỤC GIAO DIỆN
             AODSetState(AODStateIdle);
             gCurrentAODProgress = 1.0f;
-            if (gCoverSheetVC && [gCoverSheetVC respondsToSelector:@selector(_updateAppearanceForAODTransitionToInactive:)]) {
+            UIView *wakeRoot = gCoverSheetVC.view;
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    [gCoverSheetVC _updateAppearanceForAODTransitionToInactive:NO];
+                    aodApplyDim(wakeRoot, NO, 0.35);
+                    aodSetChromeHidden(wakeRoot, NO);
                 });
-            }
         }
     }
     %orig(state, source, YES, completion);
@@ -1732,9 +1700,115 @@ static PSSpecifier *makeAODSlider(id target, NSString *key, NSString *sid, float
     return s;
 }
 
+// ===== TRANG CON TỰ DỰNG: lớp PSListController riêng, tạo lúc chạy =====
+static char kAODSpecKey;
+
+static NSMutableArray *aodBuildDetailSpecifiers(id ctrl) {
+    NSMutableArray *specs = [NSMutableArray array];
+
+    PSSpecifier *h1 = [%c(PSSpecifier) preferenceSpecifierNamed:@"MÀN HÌNH LUÔN BẬT"
+                                                         target:ctrl set:NULL get:NULL detail:Nil cell:0 edit:Nil];
+    [h1 setProperty:@"AOD_REAL_MASTER_GROUP" forKey:@"id"];
+    [specs addObject:h1];
+    [specs addObject:makeAODSwitch(ctrl, @"Màn hình luôn bật", @"enabled", @"AOD_REAL_MASTER")];
+
+    if (aodReadBool(CFSTR("enabled"), YES)) {
+        PSSpecifier *h2 = [%c(PSSpecifier) preferenceSpecifierNamed:@"HIỂN THỊ KHI LUÔN BẬT"
+                                                             target:ctrl set:NULL get:NULL detail:Nil cell:0 edit:Nil];
+        [h2 setProperty:@"AOD_REAL_DISPLAY_GROUP" forKey:@"id"];
+        [specs addObject:h2];
+        [specs addObject:makeAODSwitch(ctrl, @"Hiện hình nền", @"ShowWallpaperInAlwaysOn", @"AOD_REAL_WALLPAPER")];
+        [specs addObject:makeAODSwitch(ctrl, @"Làm mờ hình nền", @"BlurWallpaperInAlwaysOn", @"AOD_REAL_BLUR")];
+        [specs addObject:makeAODSwitch(ctrl, @"Hiện thông báo", @"ShowNotificationsInAlwaysOn", @"AOD_REAL_NOTIFY")];
+
+        PSSpecifier *hzGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"TẦN SỐ QUÉT TĨNH (2 - 5 HZ)"
+                                                                  target:ctrl set:NULL get:NULL detail:Nil cell:0 edit:Nil];
+        [hzGroup setProperty:aodHzFooter() forKey:@"footerText"];
+        [hzGroup setProperty:@"AOD_REAL_HZ_GROUP" forKey:@"id"];
+        [specs addObject:hzGroup];
+        [specs addObject:makeAODSlider(ctrl, @"CustomAODRefreshRate", @"AOD_REAL_HZ", 2.0f, 5.0f, 3)];
+
+        PSSpecifier *brGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"ĐỘ SÁNG MÀN HÌNH TĨNH AOD (2 - 30)"
+                                                                  target:ctrl set:NULL get:NULL detail:Nil cell:0 edit:Nil];
+        [brGroup setProperty:aodBrightnessFooter() forKey:@"footerText"];
+        [brGroup setProperty:@"AOD_REAL_BRIGHTNESS_GROUP" forKey:@"id"];
+        [specs addObject:brGroup];
+        [specs addObject:makeAODSlider(ctrl, @"CustomAODBrightness", @"AOD_REAL_BRIGHTNESS", 2.0f, 30.0f, 28)];
+    }
+    return specs;
+}
+
+static NSMutableArray *aodDetailSpecifiers(id self, SEL _cmd) {
+    NSMutableArray *cached = objc_getAssociatedObject(self, &kAODSpecKey);
+    if (cached) return cached;
+    ((UIViewController *)self).title = @"Màn hình luôn bật";
+    NSMutableArray *specs = aodBuildDetailSpecifiers(self);
+    objc_setAssociatedObject(self, &kAODSpecKey, specs, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return specs;
+}
+
+static void aodDetailSetValue(id self, SEL _cmd, id value, PSSpecifier *spec) {
+    NSString *key = [spec propertyForKey:@"key"];
+    if (!key || !value) return;
+
+    id out = nil;
+    if ([key isEqualToString:@"CustomAODRefreshRate"]) {
+        out = @(fmaxf(2.0f, fminf(5.0f, roundf([value floatValue]))));
+    } else if ([key isEqualToString:@"CustomAODBrightness"]) {
+        out = @(fmaxf(2.0f, fminf(30.0f, roundf([value floatValue]))));
+    } else {
+        out = @([value boolValue]);
+    }
+    aodWriteValue((__bridge CFStringRef)key, (__bridge CFPropertyListRef)out);
+    loadAODPreferences();
+
+    PSListController *ctrl = (PSListController *)self;
+    if ([key isEqualToString:@"enabled"]) {
+        objc_setAssociatedObject(self, &kAODSpecKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [ctrl reloadSpecifiers];
+        return;
+    }
+
+    NSString *groupID = nil, *footer = nil;
+    if ([key isEqualToString:@"CustomAODRefreshRate"]) {
+        groupID = @"AOD_REAL_HZ_GROUP"; footer = aodHzFooter();
+    } else if ([key isEqualToString:@"CustomAODBrightness"]) {
+        groupID = @"AOD_REAL_BRIGHTNESS_GROUP"; footer = aodBrightnessFooter();
+    }
+    if (!groupID) return;
+    for (PSSpecifier *s in [ctrl specifiers]) {
+        if ([[s propertyForKey:@"id"] isEqualToString:groupID]) {
+            [s setProperty:footer forKey:@"footerText"];
+            [ctrl reloadSpecifier:s animated:NO];
+            break;
+        }
+    }
+}
+
+static id aodDetailGetValue(id self, SEL _cmd, PSSpecifier *spec) {
+    NSString *key = [spec propertyForKey:@"key"];
+    if (!key) return nil;
+    if ([key isEqualToString:@"CustomAODRefreshRate"]) return @(getCustomAODRefreshRate());
+    if ([key isEqualToString:@"CustomAODBrightness"]) return @(getCustomAODBrightnessFactor() * 1000.0f);
+    return @(aodReadBool((__bridge CFStringRef)key, YES));
+}
+
+static Class aodDetailClass(void) {
+    Class existing = objc_getClass("AODRealDetailController");
+    if (existing) return existing;
+    Class base = objc_getClass("PSListController");
+    if (!base) return Nil;
+    Class cls = objc_allocateClassPair(base, "AODRealDetailController", 0);
+    if (!cls) return Nil;
+    class_addMethod(cls, @selector(specifiers), (IMP)aodDetailSpecifiers, "@@:");
+    class_addMethod(cls, @selector(setAODValue:spec:), (IMP)aodDetailSetValue, "v@:@@");
+    class_addMethod(cls, @selector(getAODValue:), (IMP)aodDetailGetValue, "@@:@");
+    objc_registerClassPair(cls);
+    return cls;
+}
+
 %group Group_Preferences
 
-// ÉP HỆ THỐNG MỞ KHÓA TÍNH NĂNG AOD GỐC CHO PHẦN CÀI ĐẶT
 %hook BLSBacklight
 + (BOOL)isAlwaysOnEnabledByHardware { return YES; }
 %end
@@ -1747,67 +1821,60 @@ static PSSpecifier *makeAODSlider(id target, NSString *key, NSString *sid, float
 + (BOOL)isAlwaysOnDisplaySupported { return YES; }
 %end
 
-// HOOK TRỰC TIẾP VÀO CONTROLLER MÀN HÌNH: DBSMainDisplayPreferencesController
 %hook DBSMainDisplayPreferencesController
 
 - (NSMutableArray *)specifiers {
     NSArray *origSpecs = %orig;
     NSMutableArray *specs = origSpecs ? [origSpecs mutableCopy] : [NSMutableArray array];
 
-    static NSString *const kAODEntryID = @"ALWAYS_ON_DISPLAY_ENTRY_ROW";
-    for (PSSpecifier *s in specs) {
-        if ([[s propertyForKey:@"id"] isEqualToString:kAODEntryID]) {
-            return specs;
-        }
+    // Bỏ dòng cũ (nếu có) để không trùng khi trang nạp lại
+    NSMutableArray *drop = [NSMutableArray array];
+    for (PSSpecifier *sp in specs) {
+        if ([[sp propertyForKey:@"id"] isEqualToString:@"AOD_REAL_ROW"]) [drop addObject:sp];
     }
+    [specs removeObjectsInArray:drop];
 
-    Class detailClass = NSClassFromString(@"DBSAlwaysOnViewController");
-    if (!detailClass) {
-        dlopen("/System/Library/PrivateFrameworks/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW);
-        dlopen("/System/Library/PrivateFrameworks/Settings/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW);
-        detailClass = NSClassFromString(@"DBSAlwaysOnViewController");
-    }
-
+    Class detailClass = aodDetailClass();
     if (detailClass) {
-        PSSpecifier *aodSpec = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình Luôn bật"
-                                                                  target:self 
-                                                                     set:NULL 
-                                                                     get:@selector(getAODMasterStatusText:) 
-                                                                  detail:detailClass 
-                                                                    cell:2 // PSLinkCell
-                                                                    edit:Nil];
-        [aodSpec setProperty:kAODEntryID forKey:@"id"];
-        [aodSpec setProperty:detailClass forKey:@"detail"];
-        [aodSpec setProperty:@YES forKey:@"isController"];
-        [aodSpec setProperty:@YES forKey:@"enabled"];
+        PSSpecifier *row = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình luôn bật"
+                                                              target:self
+                                                                 set:NULL
+                                                                 get:@selector(getAODMasterStatusText:)
+                                                              detail:detailClass
+                                                                cell:2 // PSLinkCell
+                                                                edit:Nil];
+        [row setProperty:@"AOD_REAL_ROW" forKey:@"id"];
+        [row setProperty:detailClass forKey:@"detail"];
+        [row setProperty:@YES forKey:@"isController"];
+        [row setProperty:@YES forKey:@"enabled"];
 
-        // Chèn vào vị trí kế sau mục "Đưa lên để bật" hoặc "Tự động khóa"
-        NSInteger targetIndex = -1;
+        // Đặt ngay sau "Đưa lên để bật"; không có thì sau "Tự động khóa"; không có nữa thì cuối trang
+        NSInteger at = -1;
         for (NSInteger i = 0; i < (NSInteger)specs.count; i++) {
-            NSString *sid = [[[specs objectAtIndex:i] propertyForKey:@"id"] description].uppercaseString;
-            if ([sid containsString:@"RAISE_TO_WAKE"] || [sid containsString:@"WAKE"]) {
-                targetIndex = i + 1;
-                break;
-            }
+            PSSpecifier *sp = specs[i];
+            NSString *sid = [[sp propertyForKey:@"id"] description].uppercaseString;
+            NSString *title = [sp name];
+            if ([sid containsString:@"RAISE"] || [sid containsString:@"WAKE"] ||
+                [title isEqualToString:@"Đưa lên để bật"]) { at = i + 1; break; }
         }
-        if (targetIndex < 0) {
+        if (at < 0) {
             for (NSInteger i = 0; i < (NSInteger)specs.count; i++) {
-                NSString *sid = [[[specs objectAtIndex:i] propertyForKey:@"id"] description].uppercaseString;
-                if ([sid containsString:@"AUTOLOCK"] || [sid containsString:@"AUTO_LOCK"]) {
-                    targetIndex = i + 1;
-                    break;
-                }
+                NSString *sid = [[[specs[i] propertyForKey:@"id"] description] uppercaseString];
+                if ([sid containsString:@"AUTOLOCK"] || [sid containsString:@"AUTO_LOCK"]) { at = i + 1; break; }
             }
         }
-
-        if (targetIndex >= 0 && targetIndex <= (NSInteger)specs.count) {
-            [specs insertObject:aodSpec atIndex:targetIndex];
-        } else {
-            [specs addObject:aodSpec];
-        }
+        if (at >= 0 && at <= (NSInteger)specs.count) [specs insertObject:row atIndex:at];
+        else [specs addObject:row];
+        AODLOG(@"Display row inserted at %ld", (long)at);
+    } else {
+        AODLOG(@"detail class unavailable, row not inserted");
     }
 
-    [self setValue:specs forKey:@"_specifiers"];
+    @try {
+        [self setValue:specs forKey:@"_specifiers"];
+    } @catch (NSException *e) {
+        AODLOG(@"set _specifiers failed: %@", e);
+    }
     return specs;
 }
 
@@ -1817,137 +1884,6 @@ static PSSpecifier *makeAODSlider(id target, NSString *key, NSString *sid, float
 }
 
 %end
-
-// TRANG CON AOD: CÔNG TẮC & THANH TRƯỢT NỐI TRỰC TIẾP VÀO CẤU HÌNH TWEAK
-%hook DBSAlwaysOnViewController
-
-- (BOOL)shouldShowAlwaysOn {
-    return YES;
-}
-
-%new
-- (id)getAODValue:(PSSpecifier *)spec {
-    NSString *key = [spec propertyForKey:@"key"];
-    if (!key) return nil;
-    if ([key isEqualToString:@"CustomAODRefreshRate"]) {
-        return @(getCustomAODRefreshRate());
-    }
-    if ([key isEqualToString:@"CustomAODBrightness"]) {
-        return @(getCustomAODBrightnessFactor() * 1000.0f);
-    }
-    return @(aodReadBool((__bridge CFStringRef)key, YES));
-}
-
-%new
-- (void)setAODValue:(id)value spec:(PSSpecifier *)spec {
-    NSString *key = [spec propertyForKey:@"key"];
-    if (!key || !value) return;
-
-    id out = nil;
-    if ([key isEqualToString:@"CustomAODRefreshRate"]) {
-        out = @(fmaxf(2.0f, fminf(5.0f, roundf([value floatValue]))));
-    } else if ([key isEqualToString:@"CustomAODBrightness"]) {
-        out = @(fmaxf(2.0f, fminf(30.0f, roundf([value floatValue]))));
-    } else {
-        out = @([value boolValue]);
-    }
-
-    aodWriteValue((__bridge CFStringRef)key, (__bridge CFPropertyListRef)out);
-    loadAODPreferences();
-
-    if ([key isEqualToString:@"enabled"]) {
-        [self reloadSpecifiers]; // Bật/tắt master -> hiện/ẩn thanh trượt
-        return;
-    }
-
-    NSString *groupID = nil;
-    NSString *footer = nil;
-    if ([key isEqualToString:@"CustomAODRefreshRate"]) {
-        groupID = @"AOD_REAL_HZ_GROUP";
-        footer = aodHzFooter();
-    } else if ([key isEqualToString:@"CustomAODBrightness"]) {
-        groupID = @"AOD_REAL_BRIGHTNESS_GROUP";
-        footer = aodBrightnessFooter();
-    }
-    if (!groupID) return;
-
-    for (PSSpecifier *s in [self specifiers]) {
-        if ([[s propertyForKey:@"id"] isEqualToString:groupID]) {
-            [s setProperty:footer forKey:@"footerText"];
-            [self reloadSpecifier:s animated:NO];
-            break;
-        }
-    }
-}
-
-- (NSMutableArray *)specifiers {
-    NSArray *origSpecs = %orig;
-    NSMutableArray *specs = origSpecs ? [origSpecs mutableCopy] : [NSMutableArray array];
-
-    // 1. Gỡ công tắc gốc của Apple có cùng key/ID để tránh trùng dòng
-    if ([self respondsToSelector:@selector(_alwaysOnDisplaySpecifier)]) {
-        PSSpecifier *nativeMaster = [self _alwaysOnDisplaySpecifier];
-        if (nativeMaster) [specs removeObject:nativeMaster];
-    }
-    NSSet *ownKeys = [NSSet setWithObjects:@"enabled", @"AlwaysOnDisplayEnabled",
-                      @"ShowWallpaperInAlwaysOn", @"BlurWallpaperInAlwaysOn",
-                      @"ShowNotificationsInAlwaysOn", nil];
-    NSMutableArray *drop = [NSMutableArray array];
-    for (PSSpecifier *s in specs) {
-        NSString *sid = [s propertyForKey:@"id"];
-        NSString *skey = [s propertyForKey:@"key"];
-        if ([sid hasPrefix:@"AOD_REAL_"] || (skey && [ownKeys containsObject:skey])) {
-            [drop addObject:s];
-        }
-    }
-    [specs removeObjectsInArray:drop];
-
-    // 2. Dựng lại đúng thứ tự:
-    //    tiêu đề nhỏ -> công tắc "Màn hình luôn bật"
-    //    -> (khi bật) tiêu đề nhỏ + 3 công tắc hiển thị -> Hz -> độ sáng
-    NSMutableArray *mine = [NSMutableArray array];
-
-    PSSpecifier *masterHeader = [%c(PSSpecifier) preferenceSpecifierNamed:@"MÀN HÌNH LUÔN BẬT"
-                                                                    target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
-    [masterHeader setProperty:@"AOD_REAL_MASTER_GROUP" forKey:@"id"];
-    [mine addObject:masterHeader];
-    [mine addObject:makeAODSwitch(self, @"Màn hình luôn bật", @"enabled", @"AOD_REAL_MASTER")];
-
-    if (aodReadBool(CFSTR("enabled"), YES)) {
-        PSSpecifier *displayHeader = [%c(PSSpecifier) preferenceSpecifierNamed:@"HIỂN THỊ KHI LUÔN BẬT"
-                                                                        target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
-        [displayHeader setProperty:@"AOD_REAL_DISPLAY_GROUP" forKey:@"id"];
-        [mine addObject:displayHeader];
-        [mine addObject:makeAODSwitch(self, @"Hiện hình nền", @"ShowWallpaperInAlwaysOn", @"AOD_REAL_WALLPAPER")];
-        [mine addObject:makeAODSwitch(self, @"Làm mờ hình nền", @"BlurWallpaperInAlwaysOn", @"AOD_REAL_BLUR")];
-        [mine addObject:makeAODSwitch(self, @"Hiện thông báo", @"ShowNotificationsInAlwaysOn", @"AOD_REAL_NOTIFY")];
-
-        PSSpecifier *hzGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"TẦN SỐ QUÉT TĨNH (2 - 5 HZ)"
-                                                                  target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
-        [hzGroup setProperty:aodHzFooter() forKey:@"footerText"];
-        [hzGroup setProperty:@"AOD_REAL_HZ_GROUP" forKey:@"id"];
-        [mine addObject:hzGroup];
-        [mine addObject:makeAODSlider(self, @"CustomAODRefreshRate", @"AOD_REAL_HZ", 2.0f, 5.0f, 3)];
-
-        PSSpecifier *brGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"ĐỘ SÁNG MÀN HÌNH TĨNH AOD (2 - 30)"
-                                                                  target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
-        [brGroup setProperty:aodBrightnessFooter() forKey:@"footerText"];
-        [brGroup setProperty:@"AOD_REAL_BRIGHTNESS_GROUP" forKey:@"id"];
-        [mine addObject:brGroup];
-        [mine addObject:makeAODSlider(self, @"CustomAODBrightness", @"AOD_REAL_BRIGHTNESS", 2.0f, 30.0f, 28)];
-    }
-
-    [specs insertObjects:mine atIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, mine.count)]];
-    @try {
-        [self setValue:specs forKey:@"_specifiers"];
-    } @catch (NSException *e) {
-        AODLOG(@"set _specifiers failed: %@", e);
-    }
-    AODLOG(@"AOD subpage specifiers: %lu", (unsigned long)specs.count);
-    return specs;
-}
-
-%end // DBSAlwaysOnViewController
 
 %end // Group_Preferences
 
@@ -1961,8 +1897,7 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
 
 static BOOL gPreferencesGroupReady = NO;
 
-// Khởi tạo hook trang Màn hình & Độ sáng. Chỉ đánh dấu xong khi đã có đủ lớp;
-// nếu chưa có thì lần sau (khi trang nạp) sẽ thử lại — không dùng dispatch_once.
+// Chỉ cần lớp DBSMainDisplayPreferencesController. Nếu chưa nạp thì thử lại khi trang nạp.
 static void initGroupPreferencesExplicitly(void) {
     if (gPreferencesGroupReady) return;
 
@@ -1977,14 +1912,11 @@ static void initGroupPreferencesExplicitly(void) {
     }
 
     Class dbsClass = objc_getClass("DBSMainDisplayPreferencesController");
-    Class aodClass = objc_getClass("DBSAlwaysOnViewController");
-    if (!dbsClass || !aodClass) {
-        AODLOG(@"Display classes not ready (main=%@ aod=%@), will retry", dbsClass, aodClass);
+    if (!dbsClass) {
+        AODLOG(@"DBSMainDisplayPreferencesController not loaded yet, will retry");
         return;
     }
-    %init(Group_Preferences,
-          DBSMainDisplayPreferencesController = dbsClass,
-          DBSAlwaysOnViewController = aodClass);
+    %init(Group_Preferences, DBSMainDisplayPreferencesController = dbsClass);
     gPreferencesGroupReady = YES;
     AODLOG(@"Preferences group ready");
 }
