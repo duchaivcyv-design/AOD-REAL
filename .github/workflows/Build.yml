@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     name: Build .deb
-    runs-on: ubuntu-latest
+    runs-on: macos-14
 
     steps:
       - name: Checkout code
@@ -16,33 +16,20 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential fakeroot rsync curl git perl dpkg-dev bzip2 zstd unzip xz-utils libxml2-dev clang
-
       - name: Setup Theos
-        env:
-          THEOS: ${{ github.workspace }}/theos
+        uses: actions/checkout@v4
+        with:
+          repository: theos/theos
+          ref: master
+          path: theos
+          submodules: recursive
+
+      - name: Setup Patched iOS SDK
         run: |
-          # 1. Clone Theos repository
-          git clone --recursive https://github.com/theos/theos.git "$THEOS"
+          mkdir -p theos/sdks
+          curl -fsSL https://github.com/theos/sdks/archive/refs/heads/master.tar.gz | tar -xz --strip-components=1 -C theos/sdks
 
-          # 2. Setup iOS Toolchain for Linux (Prebuilt LLVM Toolchain)
-          mkdir -p "$THEOS/toolchain/linux/iphone"
-          curl -fsSL https://github.com/sbingner/llvm-project/releases/download/v10.0.0-1/linux-ios-arm64-clang-toolchain.tar.xz | tar -xJ -C "$THEOS/toolchain/linux/iphone"
-
-          # 3. Setup Patched iOS SDK (iOS 16.5 SDK đầy đủ Private Frameworks)
-          mkdir -p "$THEOS/sdks"
-          curl -fsSL https://github.com/theos/sdks/archive/refs/heads/master.tar.gz | tar -xz --strip-components=1 -C "$THEOS/sdks"
-
-          # 4. Kiểm tra đường dẫn nhị phân
-          echo "=== Toolchain check ==="
-          ls -la "$THEOS/toolchain/linux/iphone/bin/clang"
-          echo "=== SDKs check ==="
-          ls -la "$THEOS/sdks"
-
-      - name: Build package
+      - name: Build rootless package
         env:
           THEOS: ${{ github.workspace }}/theos
         run: |
