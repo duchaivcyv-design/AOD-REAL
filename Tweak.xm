@@ -10,6 +10,7 @@
 #import <objc/message.h>
 #import <spawn.h>
 
+// Khai báo hook MobileSubstrate/ElleKit cho MobileGestalt runtime
 #if defined(__cplusplus)
 extern "C" {
 #endif
@@ -179,15 +180,6 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 // 1. KHAI BÁO CÁC LỚP VÀ GIAO DIỆN HỆ THỐNG
 //==============================================================
 
-// Khai báo hook MobileSubstrate/ElleKit cho MobileGestalt runtime
-#if defined(__cplusplus)
-extern "C" {
-#endif
-void MSHookFunction(void *symbol, void *replace, void **result);
-#if defined(__cplusplus)
-}
-#endif
-
 @interface SpringBoard : UIApplication
 - (void)applicationDidFinishLaunching:(id)application;
 @end
@@ -211,6 +203,9 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 - (void)insertSpecifier:(PSSpecifier *)specifier atIndex:(NSInteger)index animated:(BOOL)animated;
 - (void)addSpecifier:(PSSpecifier *)specifier animated:(BOOL)animated;
 - (id)loadSpecifiersFromPlistName:(NSString *)name target:(id)target bundle:(NSBundle *)bundle;
+// 👈 THÊM 2 dòng này vào PSListController luôn cho chắc (dùng ở nhiều nơi)
+- (id)readPreferenceValue:(PSSpecifier *)specifier;
+- (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier;
 @end
 
 // Lớp giao diện nội bộ tweak mở rộng từ PSListController
@@ -241,6 +236,9 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 - (id)getCustomHz:(PSSpecifier *)spec;
 - (void)setCustomBrightness:(id)value spec:(PSSpecifier *)spec;
 - (id)getCustomBrightness:(PSSpecifier *)spec;
+// 👈 THÊM 2 DÒNG NÀY (đây chính là nguyên nhân lỗi compile)
+- (id)readPreferenceValue:(PSSpecifier *)specifier;
+- (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier;
 @end
 
 @interface BLSHFlipbookSpecification : NSObject
@@ -539,7 +537,6 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 @interface CBController : NSObject
 - (void)setPowerState:(BOOL)state completion:(id)completion;
 @end
-
 //==============================================================
 // 2. TẦNG DRIVER & PHẦN CỨNG (BACKBOARDD) - GIẢI PHÓNG 60HZ KHI RỜI AOD
 //==============================================================
