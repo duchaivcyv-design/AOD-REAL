@@ -657,8 +657,6 @@ static void BackboarddAODStateIdle(CFNotificationCenterRef center, void *observe
 // 3. TẦNG SPRINGBOARD: KHOÁ ĐỘ TƯƠNG PHẢN ĐỒNG HỒ, TIỆM CẬN & CHẠM 2 LẦN
 //==============================================================
 
-#import <UIKit/UIKit.h>
-
 %group Group_SpringBoard
 
 static __weak CSCoverSheetViewController *gCoverSheetVC = nil;
