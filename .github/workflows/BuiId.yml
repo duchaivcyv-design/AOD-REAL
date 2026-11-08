@@ -14,33 +14,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          # Ubuntu 26.04 không còn gói 'libxml2' thuần túy, dùng 'libxml2-dev' thay thế
-          sudo apt-get install -y build-essential fakeroot rsync curl git perl dpkg-dev bzip2 zstd unzip xz-utils sudo libxml2-dev
-
-      - name: Install Theos (Download first, then extract)
-        env:
-          THEOS: ${{ github.workspace }}/theos
-        run: |
-          export THEOS="$THEOS"
-          # Tải script cài đặt về máy trước để tránh lỗi pipe/network
-          curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos -o /tmp/install-theos.sh
-          # Vá lỗi libxml2 -> libxml2-dev cho Ubuntu 26.04
-          sed -i 's/ libxml2/ libxml2-dev/g' /tmp/install-theos.sh
-          # Chạy script đã vá
-          CI=1 bash /tmp/install-theos.sh
-          
-          echo "=== Toolchain check ==="
-          ls "$THEOS/toolchain/linux/iphone/bin/clang"
-          echo "=== SDKs check ==="
-          ls "$THEOS/sdks/"
+      - name: Install Theos and SDKs
+        uses: Randomblock1/theos-action@v1
+        with:
+          # Có thể bỏ qua các dòng dưới vì đây là giá trị mặc định
+          theos-dir: 'theos'
+          theos-src: 'https://github.com/theos/theos'
+          theos-sdks: 'https://github.com/theos/sdks'
+          theos-sdks-branch: 'master'
 
       - name: Build package
-        env:
-          THEOS: ${{ github.workspace }}/theos
         run: |
+          export THEOS=${{ github.workspace }}/theos
           export PATH="$THEOS/bin:$PATH"
           make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
 
