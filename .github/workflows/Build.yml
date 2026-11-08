@@ -13,29 +13,41 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential fakeroot rsync curl git perl dpkg-dev bzip2 zstd unzip xz-utils sudo libxml2-dev
+          sudo apt-get install -y build-essential fakeroot rsync curl git perl dpkg-dev bzip2 zstd unzip xz-utils libxml2-dev clang
 
-      - name: Install Theos via official script (patched)
+      - name: Setup Theos
         env:
           THEOS: ${{ github.workspace }}/theos
-          CI: 1
         run: |
-          export THEOS="$THEOS"
-          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos | sed 's/ libxml2/ libxml2-dev/g')"
+          # 1. Clone Theos repository
+          git clone --recursive https://github.com/theos/theos.git "$THEOS"
+
+          # 2. Setup iOS Toolchain for Linux (Prebuilt LLVM Toolchain)
+          mkdir -p "$THEOS/toolchain/linux/iphone"
+          curl -fsSL https://github.com/sbingner/llvm-project/releases/download/v10.0.0-1/linux-ios-arm64-clang-toolchain.tar.xz | tar -xJ -C "$THEOS/toolchain/linux/iphone"
+
+          # 3. Setup Patched iOS SDK (iOS 16.5 SDK đầy đủ Private Frameworks)
+          mkdir -p "$THEOS/sdks"
+          curl -fsSL https://github.com/theos/sdks/archive/refs/heads/master.tar.gz | tar -xz --strip-components=1 -C "$THEOS/sdks"
+
+          # 4. Kiểm tra đường dẫn nhị phân
           echo "=== Toolchain check ==="
-          ls "$THEOS/toolchain/linux/iphone/bin/clang"
+          ls -la "$THEOS/toolchain/linux/iphone/bin/clang"
           echo "=== SDKs check ==="
-          ls "$THEOS/sdks/"
+          ls -la "$THEOS/sdks"
 
       - name: Build package
         env:
           THEOS: ${{ github.workspace }}/theos
         run: |
           export PATH="$THEOS/bin:$PATH"
+          make clean
           make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
 
       - name: Upload .deb Artifact
