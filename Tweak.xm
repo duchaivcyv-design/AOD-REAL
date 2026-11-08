@@ -45,7 +45,7 @@ static BOOL gCachedWallpaperEnabled = YES;
 static BOOL gCachedBlurWallpaperEnabled = YES;
 static BOOL gCachedNotificationsEnabled = YES;
 static float gCachedCustomHz = 1.0f; // Mặc định 1.0 Hz
-static float gCachedBrightnessFactor = 0.005f;
+static float gCachedBrightnessFactor = 0.025f; // Chuẩn AOD gốc Apple (25/1000 = 2.5%)
 
 // ĐỒNG BỘ TRẠNG THÁI LIÊN TIẾN TRÌNH (SPRINGBOARD <-> BACKBOARDD)
 static inline void setAODStateGlobal(AODState newState) {
@@ -102,18 +102,18 @@ static inline void loadAODPreferences(void) {
         gCachedCustomHz = 1.0f;
     }
 
-    // 6. Nấc độ sáng panel tĩnh
+    // 6. Nấc độ sáng panel tĩnh (Nhân 1000: 25.0f tương đương 0.025f - chuẩn AOD gốc Apple)
     CFPropertyListRef brVal = CFPreferencesCopyAppValue(CFSTR("CustomAODBrightness"), CFSTR("com.jb.aodreal"));
     if (brVal) {
         if (CFGetTypeID(brVal) == CFNumberGetTypeID()) {
             float b = [(__bridge NSNumber *)brVal floatValue];
-            if (b >= 0.5f && b <= 20.0f) {
+            if (b >= 5.0f && b <= 50.0f) {
                 gCachedBrightnessFactor = b / 1000.0f;
             }
         }
         CFRelease(brVal);
     } else {
-        gCachedBrightnessFactor = 0.005f;
+        gCachedBrightnessFactor = 0.025f; // Mặc định sáng rõ nét ngang AOD Apple
     }
 }
 
@@ -1002,11 +1002,18 @@ static void restoreLockScreenActiveUI(void) {
     return %orig;
 }
 
+- (void)_updateWithFrameSpecifier:(id)arg1 {
+    %orig(arg1);
+    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+        [self updateTimeNow];
+    }
+}
+
 - (void)updateTimeNow {
     %orig;
     if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
-        gBurnInStep++;
-        double angle = (gBurnInStep % 8) * (M_PI / 4.0);
+        gBurnInShiftStep++;
+        double angle = (gBurnInShiftStep % 8) * (M_PI / 4.0);
         CGFloat dx = (CGFloat)(cos(angle) * 0.35f);
         CGFloat dy = (CGFloat)(sin(angle) * 0.30f);
         
@@ -1450,7 +1457,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
         [hzSlider setProperty:@YES forKey:@"showValue"];
         [specs addObject:hzSlider];
 
-        // 2. THANH TRƯỢT ĐỘ SÁNG MÀN HÌNH AOD
+        // 2. THANH TRƯỢT ĐỘ SÁNG MÀN HÌNH AOD (5.0 -> 50.0, MẶC ĐỊNH 25.0 = 0.025f)
         PSSpecifier *brightGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"ĐỘ SÁNG MÀN HÌNH TĨNH AOD" target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
         float curBr = getCustomAODBrightnessFactor() * 1000.0f;
         [brightGroup setProperty:[NSString stringWithFormat:@"Mức sáng: %.1f (Kéo thanh trượt để tinh chỉnh độ sáng đèn nền vừa mắt)", curBr] forKey:@"footerText"];
@@ -1458,10 +1465,11 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
         [specs addObject:brightGroup];
 
         PSSpecifier *brightSlider = [%c(PSSpecifier) preferenceSpecifierNamed:nil target:self set:@selector(setCustomBrightness:specifier:) get:@selector(getCustomBrightness:) detail:Nil cell:5 edit:Nil];
+        [brightSlider setProperty:@"PSSliderTableCell" forKey:@"cellClass"];
         [brightSlider setProperty:@"CustomAODBrightness" forKey:@"key"];
         [brightSlider setProperty:@"AOD_CUSTOM_BRIGHTNESS_KEY" forKey:@"id"];
-        [brightSlider setProperty:@0.5f forKey:@"min"];
-        [brightSlider setProperty:@20.0f forKey:@"max"];
+        [brightSlider setProperty:@5.0f forKey:@"min"];
+        [brightSlider setProperty:@50.0f forKey:@"max"];
         [brightSlider setProperty:@YES forKey:@"showValue"];
         [specs addObject:brightSlider];
     }
@@ -1497,8 +1505,8 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 %new
 - (void)setCustomBrightness:(id)value specifier:(PSSpecifier *)spec {
     float b = [value floatValue];
-    if (b < 0.5f) b = 0.5f;
-    if (b > 20.0f) b = 20.0f;
+    if (b < 5.0f) b = 5.0f;
+    if (b > 50.0f) b = 50.0f;
 
     gCachedBrightnessFactor = b / 1000.0f;
     CFPreferencesSetAppValue(CFSTR("CustomAODBrightness"), (__bridge CFPropertyListRef)(@(b)), CFSTR("com.jb.aodreal"));
