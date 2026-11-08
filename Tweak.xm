@@ -546,13 +546,36 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 
 %group Group_Backboardd
 
-// BẢO VỆ NGUỒN ĐÈN NỀN PANEL: CHỈ GIỮ KHI ĐANG Ở TRẠNG THÁI AOD
+static BOOL gBackboarddInAOD = NO;
+
+static void BackboarddAODStateActive(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    gBackboarddInAOD = YES;
+}
+
+static void BackboarddAODStateIdle(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    gBackboarddInAOD = NO;
+    @try {
+        Class caServerClass = NSClassFromString(@"CAWindowServer");
+        if (caServerClass && [caServerClass respondsToSelector:@selector(serverIfRunning)]) {
+            id server = [caServerClass performSelector:@selector(serverIfRunning)];
+            NSArray *displays = [server valueForKey:@"displays"];
+            if (displays && displays.count > 0) {
+                CAWindowServerDisplay *mainDisplay = [displays objectAtIndex:0];
+                if ([mainDisplay respondsToSelector:@selector(setRefreshRate:)]) {
+                    [mainDisplay setRefreshRate:0.0f]; // Trả lại 60Hz gốc hệ thống ngay lập tức
+                }
+            }
+        }
+    } @catch (NSException *e) {}
+}
+
+// BẢO VỆ NGUỒN ĐÈN NỀN PANEL: CHỈ GIỮ NGUỒN KHI ĐANG Ở TRẠNG THÁI AOD
 %hook CBController
 
 - (void)setPowerState:(BOOL)state completion:(id)completion {
     if (isAODMasterEnabled() && !shouldSuppressAODBySystemPolicies()) {
-        if (!state && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
-            // Chỉ giữ nguồn sáng khi đang thực sự hiển thị AOD tĩnh
+        if (!state && gBackboarddInAOD) {
+            // Khi hệ thống muốn ngắt nguồn màn hình lúc vào AOD, giữ nguồn sáng tối thiểu
             %orig(YES, completion);
             return;
         }
@@ -566,15 +589,15 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 %hook CAWindowServerDisplay
 
 - (float)refreshRate {
-    // CHỈ ép tần số thấp khi MÀN HÌNH ĐANG Ở AOD TĨNH
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
+    // CHỈ ép tần số thấp khi THỰC SỰ ĐANG Ở AOD TĨNH
+    if (isAODMasterEnabled() && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies()) {
         return getCustomAODRefreshRate(); // 1.0f -> 5.0f Hz
     }
     return %orig; // Màn hình sáng / Homescreen: Trả về 60Hz gốc
 }
 
 - (void)setRefreshRate:(float)rate {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies()) {
         %orig(getCustomAODRefreshRate());
         return;
     }
@@ -582,14 +605,14 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 }
 
 - (BOOL)blankingRemovesPower {
-    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning) && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies()) {
         return NO;
     }
     return %orig;
 }
 
 - (void)setBlankingRemovesPower:(BOOL)val {
-    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning) && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies()) {
         %orig(NO);
         return;
     }
@@ -597,14 +620,14 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 }
 
 - (BOOL)disabled {
-    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning) && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies()) {
         return NO;
     }
     return %orig;
 }
 
 - (void)setDisabled:(BOOL)val {
-    if (isAODMasterEnabled() && val && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning) && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && val && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies()) {
         %orig(NO);
         return;
     }
@@ -612,14 +635,14 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 }
 
 - (BOOL)isBlanked {
-    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning) && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies()) {
         return NO;
     }
     return %orig;
 }
 
 - (void)setBlanked:(BOOL)blanked {
-    if (isAODMasterEnabled() && blanked && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning) && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && blanked && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies()) {
         %orig(NO);
         return;
     }
@@ -627,14 +650,14 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 }
 
 - (BOOL)disablesUpdates {
-    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning) && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies()) {
         return NO;
     }
     return %orig;
 }
 
 - (void)setDisablesUpdates:(BOOL)val {
-    if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning) && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies()) {
         %orig(NO);
         return;
     }
@@ -642,7 +665,7 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 }
 
 - (BOOL)isFlipBookActive {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies()) {
         return YES;
     }
     return %orig;
@@ -658,7 +681,7 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 
 - (BOOL)isFlipBookSuppressed {
     if (isAODMasterEnabled()) {
-        if (gCurrentState != AODStateActive || shouldSuppressAODBySystemPolicies()) {
+        if (!gBackboarddInAOD || shouldSuppressAODBySystemPolicies()) {
             return YES;
         }
     }
@@ -666,7 +689,7 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 }
 
 - (void)setFlipBookSuppressed:(BOOL)suppressed {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies() && suppressed) {
+    if (isAODMasterEnabled() && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies() && suppressed) {
         %orig(NO);
         return;
     }
@@ -674,7 +697,7 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 }
 
 - (void)powerStateDidChange:(id)arg1 {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies()) {
         return;
     }
     %orig(arg1);
@@ -684,13 +707,13 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 
 %hook BKDisplayRenderOverlay
 - (BOOL)disablesDisplayBlanking { 
-    return (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning) && !shouldSuppressAODBySystemPolicies()) ? YES : %orig; 
+    return (isAODMasterEnabled() && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies()) ? YES : %orig; 
 }
 %end
 
 %hook BKDisplayManager
 - (void)setBlanked:(BOOL)blanked withReason:(id)reason {
-    if (isAODMasterEnabled() && blanked && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning) && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && blanked && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies()) {
         %orig(NO, reason);
         return;
     }
@@ -706,7 +729,7 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 
 - (BOOL)isAlwaysOnSuppressed {
     if (isAODMasterEnabled()) {
-        return (shouldSuppressAODBySystemPolicies() || gCurrentState != AODStateActive) ? YES : NO;
+        return (shouldSuppressAODBySystemPolicies() || !gBackboarddInAOD) ? YES : NO;
     }
     return %orig;
 }
@@ -714,7 +737,7 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 - (long long)backlightState {
     long long state = %orig;
     if (isAODMasterEnabled() && state == 0) {
-        if (!shouldSuppressAODBySystemPolicies() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+        if (!shouldSuppressAODBySystemPolicies() && gBackboarddInAOD) {
             return 2;
         }
     }
@@ -730,7 +753,7 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 
 - (BOOL)isAlwaysOnSuppressed {
     if (isAODMasterEnabled()) {
-        return (shouldSuppressAODBySystemPolicies() || gCurrentState != AODStateActive) ? YES : NO;
+        return (shouldSuppressAODBySystemPolicies() || !gBackboarddInAOD) ? YES : NO;
     }
     return %orig;
 }
@@ -746,14 +769,14 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 %hook BLSHFlipbookSpecification
 
 - (double)framesPerSecond {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies()) {
         return (double)getCustomAODRefreshRate();
     }
     return %orig;
 }
 
 - (double)minimumGapDuration {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies()) {
         double fps = (double)getCustomAODRefreshRate();
         return (fps <= 1.0) ? 1.0 : (1.0 / fps);
     }
@@ -766,13 +789,13 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 
 - (BOOL)isSuppressed {
     if (isAODMasterEnabled()) {
-        if (shouldSuppressAODBySystemPolicies() || gCurrentState != AODStateActive) return YES;
+        if (shouldSuppressAODBySystemPolicies() || !gBackboarddInAOD) return YES;
     }
     return %orig;
 }
 
 - (void)setSuppressed:(BOOL)suppressed {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies() && suppressed) {
+    if (isAODMasterEnabled() && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies() && suppressed) {
         %orig(NO);
         return;
     }
@@ -780,11 +803,11 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 }
 
 - (BOOL)isUsingPseudoFlipbook { 
-    return (isAODMasterEnabled() && gCurrentState == AODStateActive) ? YES : %orig; 
+    return (isAODMasterEnabled() && gBackboarddInAOD) ? YES : %orig; 
 }
 
 - (void)suspendForReason:(id)reason {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies()) {
         return;
     }
     %orig(reason);
@@ -799,7 +822,7 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 }
 
 - (BOOL)isAlwaysOnActive { 
-    return (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) ? YES : %orig; 
+    return (isAODMasterEnabled() && gBackboarddInAOD && !shouldSuppressAODBySystemPolicies()) ? YES : %orig; 
 }
 
 - (BOOL)isClientActive { 
@@ -810,7 +833,7 @@ void MSHookFunction(void *symbol, void *replace, void **result);
 - (long long)visualState {
     long long state = %orig;
     if (isAODMasterEnabled() && state == 0) {
-        if (!shouldSuppressAODBySystemPolicies() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
+        if (!shouldSuppressAODBySystemPolicies() && gBackboarddInAOD) {
             return 2;
         }
     }
@@ -832,15 +855,24 @@ static id gCachedFlipbookSpec = nil;
 
 // HÀM KHÔI PHỤC NGAY LẬP TỨC 100% GIAO DIỆN, CỬ CHỈ HOME X VÀ CAMERA FACE ID
 static void restoreLockScreenActiveUI(void) {
-    gCurrentState = AODStateIdle;
+    setAODStateGlobal(AODStateIdle);
     gCurrentAODProgress = 1.0f;
 
-    if (gCoverSheetVC) {
-        dispatch_async(dispatch_get_main_queue(), ^{
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (gCoverSheetVC) {
             gCoverSheetVC.view.transform = CGAffineTransformIdentity;
             gCoverSheetVC.view.backgroundColor = [UIColor clearColor];
 
             @try {
+                if ([gCoverSheetVC respondsToSelector:@selector(_animateView:toWhitePointReduced:withDuration:withDispatchGroup:)]) {
+                    [gCoverSheetVC _animateView:gCoverSheetVC.view toWhitePointReduced:NO withDuration:0.0f withDispatchGroup:nil];
+                }
+
+                UIViewController *dateVC = [gCoverSheetVC valueForKey:@"_dateTimeViewController"];
+                if (dateVC && dateVC.view) {
+                    dateVC.view.transform = CGAffineTransformIdentity;
+                }
+
                 UIViewController *statusBarVC = [gCoverSheetVC valueForKey:@"_statusBarViewController"];
                 if (statusBarVC) {
                     statusBarVC.view.alpha = 1.0f;
@@ -870,8 +902,11 @@ static void restoreLockScreenActiveUI(void) {
             if ([gCoverSheetVC respondsToSelector:@selector(_updateAppearanceForAODTransitionToInactive:)]) {
                 [gCoverSheetVC _updateAppearanceForAODTransitionToInactive:NO];
             }
-        });
-    }
+            if ([gCoverSheetVC respondsToSelector:@selector(_updateWallpaperEffectView)]) {
+                [gCoverSheetVC _updateWallpaperEffectView];
+            }
+        }
+    });
 }
 
 // -------------------------------------------------------------
@@ -953,13 +988,13 @@ static void restoreLockScreenActiveUI(void) {
     if (!isAODMasterEnabled()) return;
 
     if (shouldSuppressAODBySystemPolicies()) {
-        gCurrentState = AODStateProximityOff;
+        setAODStateGlobal(AODStateProximityOff);
         return;
     }
 
     if (inactive) {
         if (gCurrentState == AODStateActive) return;
-        gCurrentState = AODStateTransitioning;
+        setAODStateGlobal(AODStateTransitioning);
 
         // 1. ẨN TỨC THÌ THANH TRÊN VÀ 2 CÔNG CỤ DƯỚI ĐÁY TẠI MILIGIÂY THỨ 0
         @try {
@@ -1012,7 +1047,7 @@ static void restoreLockScreenActiveUI(void) {
             } @catch (NSException *e) {}
         } completion:^(BOOL finished) {
             if (finished && gCurrentState == AODStateTransitioning) {
-                gCurrentState = AODStateActive;
+                setAODStateGlobal(AODStateActive);
                 @try {
                     UIViewController *combinedListVC = [self valueForKey:@"_combinedListViewController"];
                     if (combinedListVC) {
@@ -1332,7 +1367,7 @@ static void restoreLockScreenActiveUI(void) {
     if (isAODMasterEnabled()) {
         if (state == 0) {
             if (gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) {
-                gCurrentState = AODStateTransitioning;
+                setAODStateGlobal(AODStateTransitioning);
 
                 if (gCoverSheetVC && [gCoverSheetVC respondsToSelector:@selector(_updateAppearanceForAODTransitionToInactive:)]) {
                     dispatch_async(dispatch_get_main_queue(), ^{
@@ -1488,7 +1523,7 @@ static void restoreLockScreenActiveUI(void) {
 
 - (void)lockUIFromSource:(int)source withOptions:(id)options {
     if (isAODMasterEnabled() && shouldSuppressAODBySystemPolicies()) {
-        gCurrentState = AODStateProximityOff;
+        setAODStateGlobal(AODStateProximityOff);
     }
     %orig;
 }
@@ -1588,11 +1623,11 @@ static void restoreLockScreenActiveUI(void) {
     if (!isAODMasterEnabled() || gCurrentState == AODStateIdle) return;
     
     if (inProximity) {
-        gCurrentState = AODStateProximityOff;
+        setAODStateGlobal(AODStateProximityOff);
         [[%c(SBBacklightController) sharedInstance] setBacklightState:0 source:1 animated:NO completion:nil];
     } else {
         if (!shouldSuppressAODBySystemPolicies()) {
-            gCurrentState = AODStateActive;
+            setAODStateGlobal(AODStateActive);
             [[%c(SBBacklightController) sharedInstance] setBacklightState:2 source:1 animated:YES completion:nil];
         }
     }
@@ -1723,6 +1758,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 // ÉP TOÀN BỘ CÁC MODULE PHẦN CỨNG BẬT CỜ AOD CHO PREFERENCES
 %hook BLSBacklight
 + (BOOL)isAlwaysOnEnabledByHardware { return YES; }
++ (BOOL)isAlwaysOnEnabled { return YES; }
 %end
 
 %hook BLSAlwaysOnFrequencyConfiguration
@@ -1734,38 +1770,122 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 %end
 
 // HOOK CHÍNH CONTROLLER GỐC CỦA APPLE: DBSAlwaysOnViewController
-// Trang này tự động có sẵn 3 switch: Hiển thị hình nền, Làm mờ, Thông báo và Switch chính
 %hook DBSAlwaysOnViewController
 
 - (BOOL)shouldShowAlwaysOn {
     return YES;
 }
 
-- (id)isAlwaysOnEnabled:(PSSpecifier *)specifier { 
+// Bắt toàn bộ các switch đọc giá trị từ Preferences
+- (id)readPreferenceValue:(PSSpecifier *)specifier {
+    NSString *key = [specifier propertyForKey:@"key"];
+    if (!key) key = [specifier propertyForKey:@"id"];
+    
     Boolean valid = false;
-    Boolean val = CFPreferencesGetAppBooleanValue(CFSTR("AlwaysOnDisplayEnabled"), CFSTR("com.apple.BacklightServices"), &valid);
-    if (!valid) val = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.apple.BacklightServices"), &valid);
-    if (!valid) val = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.jb.aodreal"), &valid);
-    return @(valid ? (BOOL)val : YES);
+    Boolean val = CFPreferencesGetAppBooleanValue((__bridge CFStringRef)key, CFSTR("com.apple.BacklightServices"), &valid);
+    if (!valid) val = CFPreferencesGetAppBooleanValue((__bridge CFStringRef)key, CFSTR("com.jb.aodreal"), &valid);
+    if (!valid) {
+        if ([key isEqualToString:@"AlwaysOnDisplayEnabled"] || [key isEqualToString:@"enabled"]) {
+            val = isAODMasterEnabled();
+        } else if ([key isEqualToString:@"ShowWallpaperInAlwaysOn"]) {
+            val = isWallpaperEnabled();
+        } else if ([key isEqualToString:@"BlurWallpaperInAlwaysOn"]) {
+            val = isBlurWallpaperEnabled();
+        } else if ([key isEqualToString:@"ShowNotificationsInAlwaysOn"]) {
+            val = isNotificationsEnabled();
+        } else {
+            val = YES;
+        }
+    }
+    return @((BOOL)val);
 }
 
-- (void)setAlwaysOnDisplayEnabled:(id)value specifier:(PSSpecifier *)specifier {
-    CFPreferencesSetAppValue(CFSTR("AlwaysOnDisplayEnabled"), (__bridge CFPropertyListRef)(value), CFSTR("com.apple.BacklightServices"));
-    CFPreferencesSetAppValue(CFSTR("enabled"), (__bridge CFPropertyListRef)(value), CFSTR("com.apple.BacklightServices"));
-    CFPreferencesSetAppValue(CFSTR("enabled"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
+// Bắt toàn bộ các switch ghi giá trị và đồng bộ Darwin Notification
+- (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
+    NSString *key = [specifier propertyForKey:@"key"];
+    if (!key) key = [specifier propertyForKey:@"id"];
+    if (!key) return;
+
+    CFPreferencesSetAppValue((__bridge CFStringRef)key, (__bridge CFPropertyListRef)(value), CFSTR("com.apple.BacklightServices"));
+    CFPreferencesSetAppValue((__bridge CFStringRef)key, (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
+
+    if ([key isEqualToString:@"AlwaysOnDisplayEnabled"] || [key isEqualToString:@"enabled"]) {
+        CFPreferencesSetAppValue(CFSTR("enabled"), (__bridge CFPropertyListRef)(value), CFSTR("com.apple.BacklightServices"));
+        CFPreferencesSetAppValue(CFSTR("enabled"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
+        CFPreferencesSetAppValue(CFSTR("AlwaysOnDisplayEnabled"), (__bridge CFPropertyListRef)(value), CFSTR("com.apple.BacklightServices"));
+        CFPreferencesSetAppValue(CFSTR("AlwaysOnDisplayEnabled"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
+    }
+
     CFPreferencesAppSynchronize(CFSTR("com.apple.BacklightServices"));
     CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
     loadAODPreferences();
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
-    
+
     [self reloadSpecifiers];
 }
 
-// Chèn thêm 2 thanh trượt phần cứng của tweak vào ngay dưới trang gốc
+- (id)isAlwaysOnEnabled:(PSSpecifier *)specifier { 
+    return [self readPreferenceValue:specifier];
+}
+
+- (void)setAlwaysOnDisplayEnabled:(id)value specifier:(PSSpecifier *)specifier {
+    [self setPreferenceValue:value specifier:specifier];
+}
+
+%new
+- (id)getAODVal:(PSSpecifier *)specifier {
+    return [self readPreferenceValue:specifier];
+}
+
+%new
+- (void)setAODVal:(id)value specifier:(PSSpecifier *)specifier {
+    [self setPreferenceValue:value specifier:specifier];
+}
+
+// DANH SÁCH MỤC CÀI ĐẶT: GHÉP THANH TRƯỢT HZ VÀ ĐỘ SÁNG CHUẨN XÁC
 - (NSMutableArray *)specifiers {
-    NSArray *origSpecs = %orig;
+    NSArray *origSpecs = nil;
+    @try {
+        origSpecs = %orig;
+    } @catch (NSException *e) {
+        origSpecs = nil;
+    }
+
     NSMutableArray *specs = origSpecs ? [origSpecs mutableCopy] : [NSMutableArray array];
 
+    // Tự động khôi phục cấu trúc gốc nếu thiết bị không nạp được specifiers từ plist của Apple
+    if (specs.count == 0) {
+        PSSpecifier *topHeader = [%c(PSSpecifier) preferenceSpecifierNamed:nil target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
+        [topHeader setProperty:@"Màn hình Luôn bật làm mờ Màn hình khóa trong khi vẫn giữ hiển thị thông tin như thời gian, tiện ích và thông báo bằng cách sử dụng nguồn điện tối thiểu.\n\nMàn hình sẽ tự động tắt để tiết kiệm pin khi không sử dụng." forKey:@"footerText"];
+        [specs addObject:topHeader];
+
+        if (isAODMasterEnabled()) {
+            PSSpecifier *customGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"TÙY CHỈNH" target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
+            [specs addObject:customGroup];
+
+            PSSpecifier *wpSwitch = [%c(PSSpecifier) preferenceSpecifierNamed:@"Hiển thị hình nền" target:self set:@selector(setAODVal:specifier:) get:@selector(getAODVal:) detail:Nil cell:6 edit:Nil];
+            [wpSwitch setProperty:@"ShowWallpaperInAlwaysOn" forKey:@"key"];
+            [specs addObject:wpSwitch];
+
+            PSSpecifier *blurSwitch = [%c(PSSpecifier) preferenceSpecifierNamed:@"Làm mờ ảnh hình nền" target:self set:@selector(setAODVal:specifier:) get:@selector(getAODVal:) detail:Nil cell:6 edit:Nil];
+            [blurSwitch setProperty:@"BlurWallpaperInAlwaysOn" forKey:@"key"];
+            [specs addObject:blurSwitch];
+
+            PSSpecifier *notifSwitch = [%c(PSSpecifier) preferenceSpecifierNamed:@"Hiển thị thông báo" target:self set:@selector(setAODVal:specifier:) get:@selector(getAODVal:) detail:Nil cell:6 edit:Nil];
+            [notifSwitch setProperty:@"ShowNotificationsInAlwaysOn" forKey:@"key"];
+            [specs addObject:notifSwitch];
+        }
+
+        PSSpecifier *masterGroup = [%c(PSSpecifier) preferenceSpecifierNamed:nil target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
+        [masterGroup setProperty:@"Khi tắt Màn hình Luôn bật, màn hình sẽ tắt hoàn toàn khi iPhone bị khóa." forKey:@"footerText"];
+        [specs addObject:masterGroup];
+
+        PSSpecifier *masterSwitch = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình Luôn bật" target:self set:@selector(setAODVal:specifier:) get:@selector(getAODVal:) detail:Nil cell:6 edit:Nil];
+        [masterSwitch setProperty:@"AlwaysOnDisplayEnabled" forKey:@"key"];
+        [specs addObject:masterSwitch];
+    }
+
+    // Chống chèn trùng lặp thanh trượt
     static NSString *const kAODRealHzID = @"AOD_CUSTOM_HZ_KEY";
     for (PSSpecifier *s in specs) {
         if ([[s propertyForKey:@"id"] isEqualToString:kAODRealHzID]) {
@@ -1773,20 +1893,15 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
         }
     }
 
-    Boolean valid = false;
-    Boolean masterVal = CFPreferencesGetAppBooleanValue(CFSTR("AlwaysOnDisplayEnabled"), CFSTR("com.apple.BacklightServices"), &valid);
-    if (!valid) masterVal = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.apple.BacklightServices"), &valid);
-    if (!valid) masterVal = CFPreferencesGetAppBooleanValue(CFSTR("enabled"), CFSTR("com.jb.aodreal"), &valid);
-    BOOL isMasterOn = valid ? (BOOL)masterVal : YES;
-
-    if (isMasterOn) {
+    if (isAODMasterEnabled()) {
+        // 1. THANH TRƯỢT TẦN SỐ QUÉT HZ (1 - 5 Hz)
         PSSpecifier *hzGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"TẦN SỐ QUÉT TĨNH (1 - 5 HZ)" target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
         float curHz = getCustomAODRefreshRate();
         [hzGroup setProperty:[NSString stringWithFormat:@"Hiện tại: %.0f Hz (Tần số quét màn hình khi hiển thị AOD tĩnh)", curHz] forKey:@"footerText"];
         [hzGroup setProperty:@"AOD_HZ_GROUP_ID" forKey:@"id"];
         [specs addObject:hzGroup];
 
-        PSSpecifier *hzSlider = [%c(PSSpecifier) preferenceSpecifierNamed:nil target:self set:@selector(setCustomHz:spec:) get:@selector(getCustomHz:) detail:Nil cell:5 edit:Nil];
+        PSSpecifier *hzSlider = [%c(PSSpecifier) preferenceSpecifierNamed:nil target:self set:@selector(setCustomHz:specifier:) get:@selector(getCustomHz:) detail:Nil cell:5 edit:Nil];
         [hzSlider setProperty:@"PSSliderTableCell" forKey:@"cellClass"];
         [hzSlider setProperty:@"CustomAODRefreshRate" forKey:@"key"];
         [hzSlider setProperty:kAODRealHzID forKey:@"id"];
@@ -1797,13 +1912,14 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
         [hzSlider setProperty:@YES forKey:@"showValue"];
         [specs addObject:hzSlider];
 
+        // 2. THANH TRƯỢT ĐỘ SÁNG MÀN HÌNH AOD
         PSSpecifier *brightGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"ĐỘ SÁNG MÀN HÌNH TĨNH AOD" target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
         float curBr = getCustomAODBrightnessFactor() * 1000.0f;
         [brightGroup setProperty:[NSString stringWithFormat:@"Mức sáng: %.1f (Kéo thanh trượt để tinh chỉnh độ sáng đèn nền vừa mắt)", curBr] forKey:@"footerText"];
         [brightGroup setProperty:@"AOD_BRIGHTNESS_GROUP_ID" forKey:@"id"];
         [specs addObject:brightGroup];
 
-        PSSpecifier *brightSlider = [%c(PSSpecifier) preferenceSpecifierNamed:nil target:self set:@selector(setCustomBrightness:spec:) get:@selector(getCustomBrightness:) detail:Nil cell:5 edit:Nil];
+        PSSpecifier *brightSlider = [%c(PSSpecifier) preferenceSpecifierNamed:nil target:self set:@selector(setCustomBrightness:specifier:) get:@selector(getCustomBrightness:) detail:Nil cell:5 edit:Nil];
         [brightSlider setProperty:@"PSSliderTableCell" forKey:@"cellClass"];
         [brightSlider setProperty:@"CustomAODBrightness" forKey:@"key"];
         [brightSlider setProperty:@"AOD_CUSTOM_BRIGHTNESS_KEY" forKey:@"id"];
@@ -1818,7 +1934,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 }
 
 %new
-- (void)setCustomHz:(id)value spec:(PSSpecifier *)spec {
+- (void)setCustomHz:(id)value specifier:(PSSpecifier *)spec {
     float roundedHz = roundf([value floatValue]);
     if (roundedHz < 1.0f) roundedHz = 1.0f;
     if (roundedHz > 5.0f) roundedHz = 5.0f;
@@ -1831,11 +1947,6 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
     for (PSSpecifier *s in [self specifiers]) {
         if ([[s propertyForKey:@"id"] isEqualToString:@"AOD_HZ_GROUP_ID"]) {
             [s setProperty:[NSString stringWithFormat:@"Hiện tại: %.0f Hz (Tần số quét màn hình khi hiển thị AOD tĩnh)", roundedHz] forKey:@"footerText"];
-            SEL reloadSel = @selector(reloadSpecifier:animated:);
-            if ([self respondsToSelector:reloadSel]) {
-                void (*reloadFunc)(id, SEL, id, BOOL) = (void (*)(id, SEL, id, BOOL))objc_msgSend;
-                reloadFunc(self, reloadSel, s, NO);
-            }
             break;
         }
     }
@@ -1847,7 +1958,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 }
 
 %new
-- (void)setCustomBrightness:(id)value spec:(PSSpecifier *)spec {
+- (void)setCustomBrightness:(id)value specifier:(PSSpecifier *)spec {
     float b = [value floatValue];
     if (b < 0.5f) b = 0.5f;
     if (b > 20.0f) b = 20.0f;
@@ -1860,11 +1971,6 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
     for (PSSpecifier *s in [self specifiers]) {
         if ([[s propertyForKey:@"id"] isEqualToString:@"AOD_BRIGHTNESS_GROUP_ID"]) {
             [s setProperty:[NSString stringWithFormat:@"Mức sáng: %.1f (Kéo thanh trượt để tinh chỉnh độ sáng đèn nền vừa mắt)", b] forKey:@"footerText"];
-            SEL reloadSel = @selector(reloadSpecifier:animated:);
-            if ([self respondsToSelector:reloadSel]) {
-                void (*reloadFunc)(id, SEL, id, BOOL) = (void (*)(id, SEL, id, BOOL))objc_msgSend;
-                reloadFunc(self, reloadSel, s, NO);
-            }
             break;
         }
     }
@@ -1894,7 +2000,6 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
             }
         }
 
-        // Lấy Class gốc DBSAlwaysOnViewController của Apple
         Class detailClass = NSClassFromString(@"DBSAlwaysOnViewController");
         if (!detailClass) {
             dlopen("/System/Library/PrivateFrameworks/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW);
