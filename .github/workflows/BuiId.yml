@@ -17,15 +17,21 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
+          # Ubuntu 26.04 không còn gói 'libxml2' thuần túy, dùng 'libxml2-dev' thay thế
           sudo apt-get install -y build-essential fakeroot rsync curl git perl dpkg-dev bzip2 zstd unzip xz-utils sudo libxml2-dev
 
-      - name: Install Theos via official script (patched)
+      - name: Install Theos (Download first, then extract)
         env:
           THEOS: ${{ github.workspace }}/theos
-          CI: 1
         run: |
           export THEOS="$THEOS"
-          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos | sed 's/ libxml2/ libxml2-dev/g')"
+          # Tải script cài đặt về máy trước để tránh lỗi pipe/network
+          curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos -o /tmp/install-theos.sh
+          # Vá lỗi libxml2 -> libxml2-dev cho Ubuntu 26.04
+          sed -i 's/ libxml2/ libxml2-dev/g' /tmp/install-theos.sh
+          # Chạy script đã vá
+          CI=1 bash /tmp/install-theos.sh
+          
           echo "=== Toolchain check ==="
           ls "$THEOS/toolchain/linux/iphone/bin/clang"
           echo "=== SDKs check ==="
