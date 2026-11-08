@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     name: Build .deb
-    runs-on: ubuntu-latest
+    runs-on: macos-15
 
     steps:
       - name: Checkout code
@@ -16,34 +16,20 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install system dependencies
+      - name: Setup Theos
+        uses: actions/checkout@v4
+        with:
+          repository: theos/theos
+          ref: master
+          path: theos
+          submodules: recursive
+
+      - name: Setup Patched iOS SDK
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential fakeroot rsync curl git perl dpkg-dev bzip2 zstd unzip xz-utils libxml2-dev clang llvm lld
+          mkdir -p theos/sdks
+          curl -fsSL https://github.com/theos/sdks/archive/refs/heads/master.tar.gz | tar -xz --strip-components=1 -C theos/sdks
 
-      - name: Setup Theos & Official Toolchain
-        env:
-          THEOS: ${{ github.workspace }}/theos
-        run: |
-          # 1. Clone Theos repository
-          git clone --recursive https://github.com/theos/theos.git "$THEOS"
-
-          # 2. Tải Linux toolchain từ mirror chính thức của Theos
-          mkdir -p "$THEOS/toolchain/linux/iphone"
-          curl -fsSL https://github.com/theos/toolchain/releases/download/v1.0.0/arm64-toolchain-linux.tar.zst | tar --zstd -x -C "$THEOS/toolchain/linux/iphone" || \
-          curl -fsSL https://github.com/theos/toolchain/releases/download/v1.0.0/arm64-toolchain-linux.tar.gz | tar -xz -C "$THEOS/toolchain/linux/iphone"
-
-          # 3. Tải iOS SDK
-          mkdir -p "$THEOS/sdks"
-          curl -fsSL https://github.com/theos/sdks/archive/refs/heads/master.tar.gz | tar -xz --strip-components=1 -C "$THEOS/sdks"
-
-          # 4. Kiểm tra file chạy
-          echo "=== Check Toolchain ==="
-          ls -la "$THEOS/toolchain/linux/iphone/bin" || true
-          echo "=== Check SDKs ==="
-          ls "$THEOS/sdks"
-
-      - name: Build package
+      - name: Build rootless package
         env:
           THEOS: ${{ github.workspace }}/theos
         run: |
