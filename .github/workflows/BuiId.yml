@@ -1,95 +1,46 @@
-name: Build and Package Theos Tweak
+name: Build AOD REAL tweak
 
 on:
   push:
-    branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
+    branches: [main, master]
   workflow_dispatch:
 
-env:
-  THEOS: ${{ github.workspace }}/theos
-
 jobs:
-  build-rootless:
-    name: Build Rootless Package
-    runs-on: macos-15
+  build:
+    name: Build .deb
+    runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Install Build Dependencies
-      run: |
-        brew install ldid xz dpkg make cmake
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential fakeroot rsync curl git perl dpkg-dev bzip2 zstd unzip xz-utils sudo libxml2-dev
 
-    - name: Setup Theos with iOS SDKs
-      run: |
-        git clone --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
-        mkdir -p "$THEOS/sdks"
-        git clone --depth 1 https://github.com/theos/sdks.git /tmp/theos-sdks
-        mv /tmp/theos-sdks/iPhoneOS*.sdk "$THEOS/sdks/"
-        echo "Available SDKs:"
-        ls "$THEOS/sdks/"
+      - name: Install Theos via official script (patched)
+        env:
+          THEOS: ${{ github.workspace }}/theos
+          CI: 1
+        run: |
+          export THEOS="$THEOS"
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos | sed 's/ libxml2/ libxml2-dev/g')"
+          echo "=== Toolchain check ==="
+          ls "$THEOS/toolchain/linux/iphone/bin/clang"
+          echo "=== SDKs check ==="
+          ls "$THEOS/sdks/"
 
-    - name: Build Dobby (Universal arm64 + arm64e)
-      run: |
-        git clone --depth 1 https://github.com/jmpews/Dobby.git /tmp/Dobby
-        cd /tmp/Dobby
+      - name: Build package
+        env:
+          THEOS: ${{ github.workspace }}/theos
+        run: |
+          export PATH="$THEOS/bin:$PATH"
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
 
-        # --- Build arm64 slice ---
-        mkdir build_arm64 && cd build_arm64
-        cmake .. \
-          -DCMAKE_SYSTEM_NAME=iOS \
-          -DCMAKE_OSX_ARCHITECTURES=arm64 \
-          -DCMAKE_SYSTEM_PROCESSOR=arm64 \
-          -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DDOBBY_GENERATE_SHARED=OFF
-        make -j$(sysctl -n hw.ncpu)
-        cd ..
-
-        # --- Build arm64e slice ---
-        mkdir build_arm64e && cd build_arm64e
-        cmake .. \
-          -DCMAKE_SYSTEM_NAME=iOS \
-          -DCMAKE_OSX_ARCHITECTURES=arm64e \
-          -DCMAKE_SYSTEM_PROCESSOR=arm64e \
-          -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DDOBBY_GENERATE_SHARED=OFF
-        make -j$(sysctl -n hw.ncpu)
-        cd ..
-
-        # --- Tự động tìm file libdobby.a (tránh lỗi sai đường dẫn của CMake) ---
-        ARM64_LIB=$(find build_arm64 -name "libdobby.a" | head -n 1)
-        ARM64E_LIB=$(find build_arm64e -name "libdobby.a" | head -n 1)
-
-        # --- Ghép 2 slice thành universal binary và copy vào project ---
-        mkdir -p "$GITHUB_WORKSPACE/vendor/dobby"
-        lipo -create \
-          "$ARM64_LIB" \
-          "$ARM64E_LIB" \
-          -output "$GITHUB_WORKSPACE/vendor/dobby/libdobby.a"
-        cp include/dobby.h "$GITHUB_WORKSPACE/vendor/dobby/"
-
-        echo "===> Dobby architectures:"
-        lipo -info "$GITHUB_WORKSPACE/vendor/dobby/libdobby.a"
-
-    - name: Compile and Package (Rootless)
-      run: |
-        make package FINALPACKAGE=1
-
-    - name: Collect Packages
-      run: |
-        mkdir -p artifacts
-        find . -maxdepth 3 -name "*.deb" -exec cp {} artifacts/ \;
-        echo "===> Built packages:"
-        ls -la artifacts/
-
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: packages-rootless
-        path: artifacts/*.deb
-        if-no-files-found: error
+      - name: Upload .deb Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AODREAL-deb
+          path: packages/*.deb
+          if-no-files-found: error
