@@ -1731,7 +1731,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
     CFPreferencesSetAppValue(CFSTR("enabled"), (__bridge CFPropertyListRef)(value), CFSTR("com.jb.aodreal"));
     CFPreferencesAppSynchronize(CFSTR("com.apple.BacklightServices"));
     CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
-    loadAODPreferences();[span_2](start_span)[span_2](end_span)
+    loadAODPreferences();
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
     
     [self reloadSpecifiers];
@@ -1757,7 +1757,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 
     if (isMasterOn) {
         PSSpecifier *hzGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"TẦN SỐ QUÉT TĨNH (1 - 5 HZ)" target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
-        float curHz = getCustomAODRefreshRate();[span_3](start_span)[span_3](end_span)
+        float curHz = getCustomAODRefreshRate();
         [hzGroup setProperty:[NSString stringWithFormat:@"Hiện tại: %.0f Hz (Tần số quét màn hình khi hiển thị AOD tĩnh)", curHz] forKey:@"footerText"];
         [hzGroup setProperty:@"AOD_HZ_GROUP_ID" forKey:@"id"];
         [specs addObject:hzGroup];
@@ -1774,7 +1774,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
         [specs addObject:hzSlider];
 
         PSSpecifier *brightGroup = [%c(PSSpecifier) preferenceSpecifierNamed:@"ĐỘ SÁNG MÀN HÌNH TĨNH AOD" target:self set:NULL get:NULL detail:Nil cell:0 edit:Nil];
-        float curBr = getCustomAODBrightnessFactor() * 1000.0f;[span_4](start_span)[span_4](end_span)
+        float curBr = getCustomAODBrightnessFactor() * 1000.0f;
         [brightGroup setProperty:[NSString stringWithFormat:@"Mức sáng: %.1f (Kéo thanh trượt để tinh chỉnh độ sáng đèn nền vừa mắt)", curBr] forKey:@"footerText"];
         [brightGroup setProperty:@"AOD_BRIGHTNESS_GROUP_ID" forKey:@"id"];
         [specs addObject:brightGroup];
@@ -1819,7 +1819,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 
 %new
 - (id)getCustomHz:(PSSpecifier *)spec {
-    return @(getCustomAODRefreshRate());[span_5](start_span)[span_5](end_span)
+    return @(getCustomAODRefreshRate());
 }
 
 %new
@@ -1848,7 +1848,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 
 %new
 - (id)getCustomBrightness:(PSSpecifier *)spec {
-    return @(getCustomAODBrightnessFactor() * 1000.0f);[span_6](start_span)[span_6](end_span)
+    return @(getCustomAODBrightnessFactor() * 1000.0f);
 }
 
 %end // DBSAlwaysOnViewController
@@ -2006,7 +2006,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 //==============================================================
 
 static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    loadAODPreferences();[span_7](start_span)[span_7](end_span)
+    loadAODPreferences();
 }
 
 %ctor {
@@ -2016,7 +2016,7 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
         NSString *processName = [[NSProcessInfo processInfo] processName];
         NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
 
-        loadAODPreferences();[span_8](start_span)[span_8](end_span)
+        loadAODPreferences();
 
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
@@ -2031,8 +2031,8 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
             [processName isEqualToString:@"SpringBoard"] || 
             [processName.lowercaseString isEqualToString:@"springboard"]) {
             
-            gIsSpringBoardProcess = YES;[span_9](start_span)[span_9](end_span)
-            gCurrentState = AODStateIdle;[span_10](start_span)[span_10](end_span)
+            gIsSpringBoardProcess = YES;
+            gCurrentState = AODStateIdle;
             %init(Group_SpringBoard);
             
         } else if ([bundleID isEqualToString:@"com.apple.PosterBoard"] || 
