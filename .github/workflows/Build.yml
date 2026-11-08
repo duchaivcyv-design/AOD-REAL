@@ -19,21 +19,29 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential fakeroot rsync curl git perl dpkg-dev bzip2 zstd unzip xz-utils libxml2-dev clang
+          sudo apt-get install -y build-essential fakeroot rsync curl git perl dpkg-dev bzip2 zstd unzip xz-utils libxml2-dev clang llvm lld
 
-      - name: Setup Theos & Stable Linux Toolchain
+      - name: Setup Theos & Official Toolchain
         env:
           THEOS: ${{ github.workspace }}/theos
         run: |
+          # 1. Clone Theos repository
           git clone --recursive https://github.com/theos/theos.git "$THEOS"
-          
-          # Tải toolchain build sẵn cho Linux (Server chính thức của Theos, không bị 504)
+
+          # 2. Tải Linux toolchain từ mirror chính thức của Theos
           mkdir -p "$THEOS/toolchain/linux/iphone"
-          curl -fsSL https://github.com/CRKCode/arm64-toolchain/releases/download/v1.0.0/arm64-toolchain-linux.tar.xz | tar -xJ -C "$THEOS/toolchain/linux/iphone"
-          
-          # Tải iOS SDK
+          curl -fsSL https://github.com/theos/toolchain/releases/download/v1.0.0/arm64-toolchain-linux.tar.zst | tar --zstd -x -C "$THEOS/toolchain/linux/iphone" || \
+          curl -fsSL https://github.com/theos/toolchain/releases/download/v1.0.0/arm64-toolchain-linux.tar.gz | tar -xz -C "$THEOS/toolchain/linux/iphone"
+
+          # 3. Tải iOS SDK
           mkdir -p "$THEOS/sdks"
           curl -fsSL https://github.com/theos/sdks/archive/refs/heads/master.tar.gz | tar -xz --strip-components=1 -C "$THEOS/sdks"
+
+          # 4. Kiểm tra file chạy
+          echo "=== Check Toolchain ==="
+          ls -la "$THEOS/toolchain/linux/iphone/bin" || true
+          echo "=== Check SDKs ==="
+          ls "$THEOS/sdks"
 
       - name: Build package
         env:
