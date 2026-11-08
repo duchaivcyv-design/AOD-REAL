@@ -10,6 +10,14 @@
 #import <objc/message.h>
 #import <spawn.h>
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+void MSHookFunction(void *symbol, void *replace, void **result);
+#if defined(__cplusplus)
+}
+#endif
+
 //==============================================================
 // 0. BỘ ĐIỀU PHỐI TRẠNG THÁI & ĐỌC CÀI ĐẶT GỐC APPLE
 //==============================================================
@@ -38,7 +46,23 @@ static BOOL gCachedNotificationsEnabled = YES;
 static float gCachedCustomHz = 1.0f; // Mặc định 1.0 Hz
 static float gCachedBrightnessFactor = 0.005f;
 
+// ĐỒNG BỘ TRẠNG THÁI LIÊN TIẾN TRÌNH (SPRINGBOARD <-> BACKBOARDD)
+static inline void setAODStateGlobal(AODState newState) {
+    if (gCurrentState == newState) return;
+    gCurrentState = newState;
+    if (gIsSpringBoardProcess) {
+        if (newState == AODStateActive) {
+            CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/state.active"), NULL, NULL, YES);
+        } else if (newState == AODStateIdle) {
+            CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/state.idle"), NULL, NULL, YES);
+        }
+    }
+}
+
 static inline void loadAODPreferences(void) {
+    CFPreferencesAppSynchronize(CFSTR("com.apple.BacklightServices"));
+    CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
+
     Boolean valid = false;
     
     // 1. Công tắc chính AOD (Màn hình luôn bật)
