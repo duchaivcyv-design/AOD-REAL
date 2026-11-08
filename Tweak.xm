@@ -1656,17 +1656,17 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 //==============================================================
 
 static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    loadAODPreferences();[span_1](start_span)[span_1](end_span)[span_2](start_span)[span_2](end_span)
+    loadAODPreferences();
 }
 
 %ctor {
     @autoreleasepool {
-        %init;[span_3](start_span)[span_3](end_span)[span_4](start_span)[span_4](end_span)
+        %init;
 
-        NSString *processName = [[NSProcessInfo processInfo] processName];[span_5](start_span)[span_5](end_span)[span_6](start_span)[span_6](end_span)
-        NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];[span_7](start_span)[span_7](end_span)[span_8](start_span)[span_8](end_span)
+        NSString *processName = [[NSProcessInfo processInfo] processName];
+        NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
 
-        loadAODPreferences();[span_9](start_span)[span_9](end_span)[span_10](start_span)[span_10](end_span)
+        loadAODPreferences();
 
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
@@ -1675,18 +1675,18 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
             CFSTR("com.jb.aodreal/preferences.changed"),
             NULL,
             CFNotificationSuspensionBehaviorDeliverImmediately
-        );[span_11](start_span)[span_11](end_span)[span_12](start_span)[span_12](end_span)
+        );
 
         if ([bundleID isEqualToString:@"com.apple.springboard"] || 
             [processName isEqualToString:@"SpringBoard"] || 
-            [processName.lowercaseString isEqualToString:@"springboard"]) {[span_13](start_span)[span_13](end_span)[span_14](start_span)[span_14](end_span)
+            [processName.lowercaseString isEqualToString:@"springboard"]) {
             
-            gIsSpringBoardProcess = YES;[span_15](start_span)[span_15](end_span)[span_16](start_span)[span_16](end_span)
-            gCurrentState = AODStateIdle;[span_17](start_span)[span_17](end_span)[span_18](start_span)[span_18](end_span)
-            %init(Group_SpringBoard);[span_19](start_span)[span_19](end_span)[span_20](start_span)[span_20](end_span)
+            gIsSpringBoardProcess = YES;
+            gCurrentState = AODStateIdle;
+            %init(Group_SpringBoard);
             
         } else if ([bundleID isEqualToString:@"com.apple.PosterBoard"] || 
-                   [processName.lowercaseString containsString:@"posterboard"]) {[span_21](start_span)[span_21](end_span)[span_22](start_span)[span_22](end_span)
+                   [processName.lowercaseString containsString:@"posterboard"]) {
             
             // Đăng ký nhận thông báo IPC từ SpringBoard để PosterBoard làm tối nền chính xác
             CFNotificationCenterAddObserver(
@@ -1696,7 +1696,7 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
                 CFSTR("com.jb.aodreal/state.active"),
                 NULL,
                 CFNotificationSuspensionBehaviorDeliverImmediately
-            );[span_23](start_span)[span_23](end_span)[span_24](start_span)[span_24](end_span)
+            );
 
             CFNotificationCenterAddObserver(
                 CFNotificationCenterGetDarwinNotifyCenter(),
@@ -1705,11 +1705,11 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
                 CFSTR("com.jb.aodreal/state.idle"),
                 NULL,
                 CFNotificationSuspensionBehaviorDeliverImmediately
-            );[span_25](start_span)[span_25](end_span)[span_26](start_span)[span_26](end_span)
+            );
 
-            %init(Group_PosterBoard);[span_27](start_span)[span_27](end_span)[span_28](start_span)[span_28](end_span)
+            %init(Group_PosterBoard);
             
-        } else if ([processName isEqualToString:@"backboardd"]) {[span_29](start_span)[span_29](end_span)[span_30](start_span)[span_30](end_span)
+        } else if ([processName isEqualToString:@"backboardd"]) {
             
             CFNotificationCenterAddObserver(
                 CFNotificationCenterGetDarwinNotifyCenter(),
@@ -1718,7 +1718,7 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
                 CFSTR("com.jb.aodreal/state.active"),
                 NULL,
                 CFNotificationSuspensionBehaviorDeliverImmediately
-            );[span_31](start_span)[span_31](end_span)[span_32](start_span)[span_32](end_span)
+            );
 
             CFNotificationCenterAddObserver(
                 CFNotificationCenterGetDarwinNotifyCenter(),
@@ -1727,30 +1727,30 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
                 CFSTR("com.jb.aodreal/state.idle"),
                 NULL,
                 CFNotificationSuspensionBehaviorDeliverImmediately
-            );[span_33](start_span)[span_33](end_span)[span_34](start_span)[span_34](end_span)
+            );
 
-            %init(Group_Backboardd);[span_35](start_span)[span_35](end_span)[span_36](start_span)[span_36](end_span)
+            %init(Group_Backboardd);
             
         } else if ([bundleID isEqualToString:@"com.apple.Preferences"] || 
-                   [processName.lowercaseString containsString:@"preferences"]) {[span_37](start_span)[span_37](end_span)[span_38](start_span)[span_38](end_span)
+                   [processName.lowercaseString containsString:@"preferences"]) {
             
             // 1. Hook MobileGestalt
-            void *gestaltHandle = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_NOW);[span_39](start_span)[span_39](end_span)[span_40](start_span)[span_40](end_span)
-            if (gestaltHandle) {[span_41](start_span)[span_41](end_span)[span_42](start_span)[span_42](end_span)
-                void *mgFunc = dlsym(gestaltHandle, "MGGetBoolAnswer");[span_43](start_span)[span_43](end_span)[span_44](start_span)[span_44](end_span)
-                if (mgFunc) {[span_45](start_span)[span_45](end_span)[span_46](start_span)[span_46](end_span)
-                    MSHookFunction(mgFunc, (void *)replaced_MGGetBoolAnswer, (void **)&orig_MGGetBoolAnswer);[span_47](start_span)[span_47](end_span)[span_48](start_span)[span_48](end_span)
+            void *gestaltHandle = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_NOW);
+            if (gestaltHandle) {
+                void *mgFunc = dlsym(gestaltHandle, "MGGetBoolAnswer");
+                if (mgFunc) {
+                    MSHookFunction(mgFunc, (void *)replaced_MGGetBoolAnswer, (void **)&orig_MGGetBoolAnswer);
                 }
             }
 
             // 2. Ép nạp thẳng các bundle gốc của Apple
-            [[NSBundle bundleWithPath:@"/System/Library/PreferenceBundles/Display.bundle"] load];[span_49](start_span)[span_49](end_span)[span_50](start_span)[span_50](end_span)
-            dlopen("/System/Library/PreferenceBundles/Display.bundle/Display", RTLD_NOW | RTLD_GLOBAL);[span_51](start_span)[span_51](end_span)[span_52](start_span)[span_52](end_span)
-            dlopen("/System/Library/PrivateFrameworks/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);[span_53](start_span)[span_53](end_span)[span_54](start_span)[span_54](end_span)
-            dlopen("/System/Library/PrivateFrameworks/Settings/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);[span_55](start_span)[span_55](end_span)[span_56](start_span)[span_56](end_span)
+            [[NSBundle bundleWithPath:@"/System/Library/PreferenceBundles/Display.bundle"] load];
+            dlopen("/System/Library/PreferenceBundles/Display.bundle/Display", RTLD_NOW | RTLD_GLOBAL);
+            dlopen("/System/Library/PrivateFrameworks/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);
+            dlopen("/System/Library/PrivateFrameworks/Settings/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);
 
             // 3. Khởi tạo Group_Preferences (Theos tự quản lý đăng ký runtime cho %subclass AODRealPreferencesController)
-            %init(Group_Preferences);[span_57](start_span)[span_57](end_span)[span_58](start_span)[span_58](end_span)
+            %init(Group_Preferences);
         }
     }
 }
