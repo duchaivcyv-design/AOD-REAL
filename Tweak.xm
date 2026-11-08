@@ -10,6 +10,7 @@
 #import <objc/message.h>
 #import <spawn.h>
 
+// Khai báo hook MobileSubstrate/ElleKit cho MobileGestalt runtime
 #if defined(__cplusplus)
 extern "C" {
 #endif
@@ -202,11 +203,106 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 - (void)insertSpecifier:(PSSpecifier *)specifier atIndex:(NSInteger)index animated:(BOOL)animated;
 - (void)addSpecifier:(PSSpecifier *)specifier animated:(BOOL)animated;
 - (id)loadSpecifiersFromPlistName:(NSString *)name target:(id)target bundle:(NSBundle *)bundle;
+// 👈 THÊM 2 dòng này vào PSListController luôn cho chắc (dùng ở nhiều nơi)
 - (id)readPreferenceValue:(PSSpecifier *)specifier;
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier;
 @end
 
-@interface AODRealPreferencesController : PSListController
+// Lớp giao diện nội bộ tweak mở rộng từ PSListController
+@interface AODRealInternalViewController : PSListController
+- (id)getAODVal:(PSSpecifier *)spec;
+- (void)setAODVal:(id)value specifier:(PSSpecifier *)spec;
+- (id)getCustomHz:(PSSpecifier *)spec;
+- (void)setCustomHz:(id)value spec:(PSSpecifier *)spec;
+- (id)getCustomBrightness:(PSSpecifier *)spec;
+- (void)setCustomBrightness:(id)value spec:(PSSpecifier *)spec;
+@end
+
+@interface DBSMainDisplayPreferencesController : PSListController
+- (NSMutableArray *)specifiers;
+- (id)getAODMasterStatusText:(PSSpecifier *)spec;
+- (id)getAODLinkStatusText:(PSSpecifier *)spec;
+@end
+
+@interface DBSAlwaysOnViewController : PSListController
+- (BOOL)shouldShowAlwaysOn;
+- (PSSpecifier *)_alwaysOnDisplaySpecifier;
+- (PSSpecifier *)_showWallpaperSpecifier;
+- (PSSpecifier *)_showNotificationsSpecifier;
+- (void)_updatesForSpecifiers:(id)arg1 isAlwaysOnEnabled:(BOOL)enabled animated:(BOOL)animated;
+- (id)isAlwaysOnEnabled:(PSSpecifier *)specifier;
+- (void)setAlwaysOnDisplayEnabled:(id)value specifier:(PSSpecifier *)specifier;
+- (void)setCustomHz:(id)value spec:(PSSpecifier *)spec;
+- (id)getCustomHz:(PSSpecifier *)spec;
+- (void)setCustomBrightness:(id)value spec:(PSSpecifier *)spec;
+- (id)getCustomBrightness:(PSSpecifier *)spec;
+// 👈 THÊM 2 DÒNG NÀY (đây chính là nguyên nhân lỗi compile)
+- (id)readPreferenceValue:(PSSpecifier *)specifier;
+- (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier;
+@end
+
+@interface BLSHFlipbookSpecification : NSObject
+- (double)framesPerSecond;
+- (double)minimumGapDuration;
+@end
+
+@interface SBBacklightPlatformProvider : NSObject
+- (BOOL)deviceSupportsAlwaysOn;
+- (BOOL)isAlwaysOnEnabled;
+- (id)flipbookSpecification;
+- (id)sessionProvider;
+- (id)initWithBacklightEnvironmentSessionProvider:(id)provider;
+- (BOOL)isShowingBlankingWindow;
+- (void)showBlankingWindow:(BOOL)show withFadeDuration:(double)duration;
+- (void)_setBlankingWindowVisible:(BOOL)visible fadeDuration:(double)duration;
+- (BOOL)isUsingAlwaysOnBrightnessCurve;
+@end
+
+@interface SBBacklightEnvironmentSessionProvider : NSObject
++ (instancetype)sharedInstance;
+- (id)createInactiveEnvironmentSession;
+- (id)_buildPresentation;
+@end
+
+@interface BLSBacklightFBSSceneEnvironment : NSObject
+- (BOOL)supportsAlwaysOn;
+- (BOOL)isDisplayBlanked;
+- (long long)visualState;
+@end
+
+@interface SBAlwaysOnPolicyCoordinator : NSObject
+- (NSSet *)activePolicies;
+- (void)_activatePolicy:(id)policy;
+@end
+
+@interface SBFocusModeAlwaysOnPolicy : NSObject
+- (BOOL)isAlwaysOnPolicyActive;
+@end
+
+@interface SBLowPowerModeAlwaysOnPolicy : NSObject
+- (BOOL)isAlwaysOnPolicyActive;
+- (void)_updateAssertion;
+@end
+
+@interface SBSetupAlwaysOnPolicy : NSObject
+- (BOOL)isAlwaysOnPolicyActive;
+@end
+
+@interface SBThermalAlwaysOnPolicy : NSObject
+- (BOOL)isAlwaysOnPolicyActive;
+@end
+
+@interface SBLockScreenService : NSObject
+- (BOOL)isAlwaysOnPolicyActive;
+@end
+
+@interface BLSHBacklightTransitionStateMachine : NSObject
+- (BOOL)isAlwaysOnEnabled;
+- (BOOL)isAlwaysOnSuppressed;
+@end
+
+@interface BLSHXPCBacklightProxyHost : NSObject
+- (BOOL)isAlwaysOnEnabled;
 @end
 
 @interface CAWindowServerDisplay : NSObject
@@ -266,8 +362,21 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 - (NSArray *)sceneHostEnvironmentEntriesForBacklightSession;
 @end
 
+@interface CSHomeAffordanceViewController : UIViewController
+- (BOOL)isHomeAffordanceHidden;
+@end
+
+@interface CSQuickActionsViewController : UIViewController
+- (BOOL)isQuickActionsHidden;
+- (void)_updateQuickActionListHidden:(BOOL)hidden;
+@end
+
 @interface CSStatusBarViewController : UIViewController
 - (BOOL)isStatusBarHidden;
+@end
+
+@interface NCNotificationShortLookView : UIView
+- (void)setLegibilitySettings:(id)settings;
 @end
 
 @interface _UILegibilitySettings : NSObject
@@ -292,6 +401,14 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 - (void)_updateWithFrameSpecifier:(id)arg1;
 @end
 
+@interface SBLockScreenViewControllerBase : UIViewController
+- (void)setBacklightLevel:(float)level;
+@end
+
+@interface SBDashBoardLockScreenEnvironment : NSObject
+- (void)setBacklightLevel:(float)level;
+@end
+
 @interface SBLockScreenManager : NSObject
 + (instancetype)sharedInstance;
 - (BOOL)isLockScreenActive;
@@ -306,6 +423,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 - (BOOL)isTapToWakeSupported;
 - (BOOL)shouldTapToWake;
 - (void)setDigitizerInTapToWakeMode:(BOOL)mode;
+- (void)setDigitizerModeRequiresHitTestSuppression:(BOOL)suppress;
 - (void)setTapToWakeGestureRecognizer:(UITapGestureRecognizer *)gesture;
 - (void)tapToWakeDidRecognize:(UITapGestureRecognizer *)gesture;
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch;
@@ -332,6 +450,37 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 - (void)_setObjectInProximity:(BOOL)inProximity detectionMode:(int)mode;
 @end
 
+@interface BLSHBacklightStateMachine : NSObject
+- (long long)backlightState;
+- (BOOL)isAlwaysOnEnabled;
+- (BOOL)isAlwaysOnSuppressed;
+- (BOOL)isAlwaysOnDisabledByAssertion;
+@end
+
+@interface BLSHAlwaysOnPresentationEngine : NSObject
+- (BOOL)isSuppressed;
+- (void)setSuppressed:(BOOL)suppressed;
+- (BOOL)isUsingPseudoFlipbook;
+- (BOOL)alwaysFillFlipbook;
+- (void)createFlipbook;
+- (id)frameOnGlassNow;
+- (void)startLiveUpdates;
+- (void)main_performLiveUpdateIfNeeded;
+- (void)suspendForReason:(id)reason;
+@end
+
+@interface BLSHPseudoFlipbook : NSObject
+- (id)init;
+- (id)frameOnGlass;
+@end
+
+@interface BLSHBacklightSceneHostEnvironment : NSObject
+- (BOOL)supportsAlwaysOn;
+- (BOOL)isAlwaysOnActive;
+- (long long)visualState;
+- (BOOL)isClientActive;
+@end
+
 @interface BKDisplayRenderOverlay : NSObject
 - (BOOL)disablesDisplayBlanking;
 @end
@@ -342,7 +491,9 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 
 @interface PRPosterEnvironmentImpl : NSObject
 - (CGFloat)backlightProgress;
+- (void)setBacklightProgress:(CGFloat)progress;
 - (CGFloat)linearBacklightProgress;
+- (void)setLinearBacklightProgress:(CGFloat)progress;
 - (long long)luminance;
 - (BOOL)isLowLuminance;
 - (BOOL)isLegibilityBlurEnabled;
@@ -357,9 +508,22 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 - (BOOL)isLegibilityBlurEnabled;
 @end
 
+@interface PRPosterLockPosterHomeScreenAppearance : NSObject
+- (BOOL)isLegibilityBlurEnabled;
+- (BOOL)allowsModifyingLegibilityBlur;
+@end
+
+@interface PRPosterHomePosterHomeScreenAppearance : NSObject
+- (BOOL)isLegibilityBlurEnabled;
+- (BOOL)allowsModifyingLegibilityBlur;
+@end
+
+@interface PRPosterDescriptorHomeScreenConfiguration : NSObject
+- (BOOL)allowsModifyingLegibilityBlur;
+@end
+
 @interface BLSBacklight : NSObject
 + (BOOL)isAlwaysOnEnabledByHardware;
-+ (BOOL)isAlwaysOnEnabled;
 @end
 
 @interface BLSAlwaysOnFrequencyConfiguration : NSObject
@@ -373,7 +537,6 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 @interface CBController : NSObject
 - (void)setPowerState:(BOOL)state completion:(id)completion;
 @end
-
 //==============================================================
 // 2. TẦNG DRIVER & PHẦN CỨNG (BACKBOARDD) - ĐỒNG BỘ NGUỒN VÀ TẦN SỐ QUÉT
 //==============================================================
@@ -650,11 +813,8 @@ static void restoreLockScreenActiveUI(void) {
     }
 
     if (inactive) {
-        if (gCurrentState == AODStateActive || gIsAODTransitioning) return;
+        if (gIsAODTransitioning) return;
         gIsAODTransitioning = YES;
-
-        // BẬT NGAY LẬP TỨC TRẠNG THÁI ACTIVE ĐỂ ĐỒNG BỘ BACKBOARDD
-        setAODStateGlobal(AODStateActive);
 
         // 1. Ẩn dứt khoát controls phụ trợ ngay lập tức tại 0ms
         UIViewController *statusBarVC = safeGetVC(self, @"_statusBarViewController");
@@ -872,22 +1032,22 @@ static void restoreLockScreenActiveUI(void) {
 %end
 
 // -------------------------------------------------------------
-// ĐIỀU PHỐI ĐỘ SÁNG MÀN HÌNH VÀ VÒNG ĐỜI AOD
+// ĐIỀU PHỐI ĐỘ SÁNG MÀN HÌNH VÀ VÒNG ĐỜI AOD (BẢO VỆ NGUỒN SÁNG TỨC THÌ)
 // -------------------------------------------------------------
 %hook SBBacklightController
 
 - (void)setBacklightState:(long long)state source:(long long)source animated:(BOOL)animated completion:(id)completion {
     if (isAODMasterEnabled()) {
         if (state == 0) {
-            // Nhấn nút nguồn tắt màn hình -> Kích hoạt AOD
+            // Nhấn nút nguồn tắt màn hình -> BẮT BUỘC BẮN TÍN HIỆU ACTIVE TỨC THÌ ĐỂ BACKBOARDD GIỮ NGUỒN ĐIỆN
             if (!shouldSuppressAODBySystemPolicies() && gCurrentState != AODStateProximityOff) {
-                // BẮN NGAY TÍN HIỆU ACTIVE ĐỒNG THỜI ĐỂ BACKBOARDD KHÔNG TẮT ĐIỆN ĐÈN NỀN
                 setAODStateGlobal(AODStateActive);
 
                 CSCoverSheetViewController *csvc = gCoverSheetVC;
                 if (csvc && [csvc respondsToSelector:@selector(_updateAppearanceForAODTransitionToInactive:)]) {
                     [csvc _updateAppearanceForAODTransitionToInactive:YES];
                 }
+                
                 // Giữ backlight ở state 2 (dimmed) thay vì 0 (screen off hoàn toàn)
                 %orig(2, source, YES, completion);
                 return;
@@ -984,7 +1144,7 @@ static void restoreLockScreenActiveUI(void) {
 
 - (void)setTapToWakeGestureRecognizer:(UITapGestureRecognizer *)gesture {
     if (isAODMasterEnabled() && [gesture isKindOfClass:[UITapGestureRecognizer class]]) {
-        gesture.numberOfTapsRequired = 2;
+        gesture.numberOfTapsRequired = 2; // Yêu cầu 2 chạm để tránh cấn túi
     }
     %orig(gesture);
 }
@@ -1163,8 +1323,9 @@ static void PosterBoardAODStateIdle(CFNotificationCenterRef center, void *observ
 
 %end // Group_PosterBoard
 
+
 //==============================================================
-// 5. TẦNG PREFERENCES: CHUẨN GỐC APPLE, TỰ HIỆN TRANG NGOÀI & BUNG MỤC CON
+// 5. TẦNG PREFERENCES: CHUẨN GỐC APPLE, KHÔNG CHỮ BẬT/TẮT NGOÀI & BUNG ĐỦ MENU CON
 //==============================================================
 
 static Boolean (*orig_MGGetBoolAnswer)(CFStringRef property) = NULL;
@@ -1180,7 +1341,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
     return orig_MGGetBoolAnswer ? orig_MGGetBoolAnswer(property) : NO;
 }
 
-// KHỞI TẠO CLASS TRANG CON DÙNG CHUẨN SUBCLASS CỦA LOGOS (TỰ ĐĂNG KÝ BẢNG RUNTIME CHO PREFERENCES)
+// KHỞI TẠO CLASS TRANG CON BẰNG %subclass ĐỂ TỰ ĐĂNG KÝ BẢNG RUNTIME CHO PREFERENCES
 %subclass AODRealPreferencesController : PSListController
 
 - (id)specifiers {
@@ -1377,7 +1538,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
         Class detailClass = NSClassFromString(@"AODRealPreferencesController");
 
         if (detailClass) {
-            // DÙNG CHUẨN DETAIL CLASS NATIVE CỦA APPLE: BUNG BẢNG UITableView ĐẦY ĐỦ, KHÔNG BAO GIỜ BỊ ĐEN XÌ
+            // GÁN TRỰC TIẾP DETAIL CLASS: TỰ ĐỘNG DỰNG UITABLEVIEW ĐẦY ĐỦ, KHÔNG CẦN ACTION THỦ CÔNG
             PSSpecifier *aodLink = [%c(PSSpecifier) preferenceSpecifierNamed:@"Màn hình Luôn bật"
                                                                       target:self 
                                                                          set:NULL 
@@ -1495,17 +1656,17 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 //==============================================================
 
 static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    loadAODPreferences();
+    loadAODPreferences();[span_5](start_span)[span_5](end_span)
 }
 
 %ctor {
     @autoreleasepool {
-        %init;
+        %init;[span_6](start_span)[span_6](end_span)
 
-        NSString *processName = [[NSProcessInfo processInfo] processName];
-        NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
+        NSString *processName = [[NSProcessInfo processInfo] processName];[span_7](start_span)[span_7](end_span)
+        NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];[span_8](start_span)[span_8](end_span)
 
-        loadAODPreferences();
+        loadAODPreferences();[span_9](start_span)[span_9](end_span)
 
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
@@ -1514,19 +1675,20 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
             CFSTR("com.jb.aodreal/preferences.changed"),
             NULL,
             CFNotificationSuspensionBehaviorDeliverImmediately
-        );
+        );[span_10](start_span)[span_10](end_span)
 
         if ([bundleID isEqualToString:@"com.apple.springboard"] || 
             [processName isEqualToString:@"SpringBoard"] || 
-            [processName.lowercaseString isEqualToString:@"springboard"]) {
+            [processName.lowercaseString isEqualToString:@"springboard"]) {[span_11](start_span)[span_11](end_span)
             
-            gIsSpringBoardProcess = YES;
-            gCurrentState = AODStateIdle;
-            %init(Group_SpringBoard);
+            gIsSpringBoardProcess = YES;[span_12](start_span)[span_12](end_span)
+            gCurrentState = AODStateIdle;[span_13](start_span)[span_13](end_span)
+            %init(Group_SpringBoard);[span_14](start_span)[span_14](end_span)
             
         } else if ([bundleID isEqualToString:@"com.apple.PosterBoard"] || 
-                   [processName.lowercaseString containsString:@"posterboard"]) {
+                   [processName.lowercaseString containsString:@"posterboard"]) {[span_15](start_span)[span_15](end_span)
             
+            // Đăng ký nhận thông báo IPC từ SpringBoard để PosterBoard làm tối nền chính xác
             CFNotificationCenterAddObserver(
                 CFNotificationCenterGetDarwinNotifyCenter(),
                 NULL,
@@ -1534,7 +1696,7 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
                 CFSTR("com.jb.aodreal/state.active"),
                 NULL,
                 CFNotificationSuspensionBehaviorDeliverImmediately
-            );
+            );[span_16](start_span)[span_16](end_span)
 
             CFNotificationCenterAddObserver(
                 CFNotificationCenterGetDarwinNotifyCenter(),
@@ -1543,11 +1705,11 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
                 CFSTR("com.jb.aodreal/state.idle"),
                 NULL,
                 CFNotificationSuspensionBehaviorDeliverImmediately
-            );
+            );[span_17](start_span)[span_17](end_span)
 
-            %init(Group_PosterBoard);
+            %init(Group_PosterBoard);[span_18](start_span)[span_18](end_span)
             
-        } else if ([processName isEqualToString:@"backboardd"]) {
+        } else if ([processName isEqualToString:@"backboardd"]) {[span_19](start_span)[span_19](end_span)
             
             CFNotificationCenterAddObserver(
                 CFNotificationCenterGetDarwinNotifyCenter(),
@@ -1556,7 +1718,7 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
                 CFSTR("com.jb.aodreal/state.active"),
                 NULL,
                 CFNotificationSuspensionBehaviorDeliverImmediately
-            );
+            );[span_20](start_span)[span_20](end_span)
 
             CFNotificationCenterAddObserver(
                 CFNotificationCenterGetDarwinNotifyCenter(),
@@ -1565,28 +1727,31 @@ static void AODPreferencesReloadCallback(CFNotificationCenterRef center, void *o
                 CFSTR("com.jb.aodreal/state.idle"),
                 NULL,
                 CFNotificationSuspensionBehaviorDeliverImmediately
-            );
+            );[span_21](start_span)[span_21](end_span)
 
-            %init(Group_Backboardd);
+            %init(Group_Backboardd);[span_22](start_span)[span_22](end_span)
             
         } else if ([bundleID isEqualToString:@"com.apple.Preferences"] || 
-                   [processName.lowercaseString containsString:@"preferences"]) {
+                   [processName.lowercaseString containsString:@"preferences"]) {[span_23](start_span)[span_23](end_span)
             
-            void *gestaltHandle = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_NOW);
-            if (gestaltHandle) {
-                void *mgFunc = dlsym(gestaltHandle, "MGGetBoolAnswer");
-                if (mgFunc) {
-                    MSHookFunction(mgFunc, (void *)replaced_MGGetBoolAnswer, (void **)&orig_MGGetBoolAnswer);
+            // 1. Hook MobileGestalt
+            void *gestaltHandle = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_NOW);[span_24](start_span)[span_24](end_span)
+            if (gestaltHandle) {[span_25](start_span)[span_25](end_span)
+                void *mgFunc = dlsym(gestaltHandle, "MGGetBoolAnswer");[span_26](start_span)[span_26](end_span)
+                if (mgFunc) {[span_27](start_span)[span_27](end_span)
+                    MSHookFunction(mgFunc, (void *)replaced_MGGetBoolAnswer, (void **)&orig_MGGetBoolAnswer);[span_28](start_span)[span_28](end_span)
                 }
             }
 
-            [[NSBundle bundleWithPath:@"/System/Library/PreferenceBundles/Display.bundle"] load];
-            dlopen("/System/Library/PreferenceBundles/Display.bundle/Display", RTLD_NOW | RTLD_GLOBAL);
-            dlopen("/System/Library/PrivateFrameworks/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);
-            dlopen("/System/Library/PrivateFrameworks/Settings/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);
+            // 2. Ép nạp thẳng các bundle gốc của Apple
+            [[NSBundle bundleWithPath:@"/System/Library/PreferenceBundles/Display.bundle"] load];[span_29](start_span)[span_29](end_span)
+            dlopen("/System/Library/PreferenceBundles/Display.bundle/Display", RTLD_NOW | RTLD_GLOBAL);[span_30](start_span)[span_30](end_span)
+            dlopen("/System/Library/PrivateFrameworks/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);[span_31](start_span)[span_31](end_span)
+            dlopen("/System/Library/PrivateFrameworks/Settings/DisplayAndBrightnessSettings.framework/DisplayAndBrightnessSettings", RTLD_NOW | RTLD_GLOBAL);[span_32](start_span)[span_32](end_span)
 
-            %init(AODRealPreferencesController);
-            %init(Group_Preferences);
+            // 3. Khởi tạo Subclass trang con trước, sau đó khởi tạo Group_Preferences
+            %init(AODRealPreferencesController);[span_33](start_span)[span_33](end_span)
+            %init(Group_Preferences);[span_34](start_span)[span_34](end_span)
         }
     }
 }
