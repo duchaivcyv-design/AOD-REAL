@@ -2,9 +2,6 @@
 #import <Foundation/Foundation.h>
 #import <QuartzCore/QuartzCore.h>
 #import <QuartzCore/CAFrameRateRange.h>
-#import <IOKit/IOKitLib.h>
-#import <IOKit/ps/IOPowerSources.h>
-#import <IOKit/ps/IOPSKeys.h>
 #import <dlfcn.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
@@ -130,47 +127,24 @@ static inline float getCustomAODRefreshRate(void) { return gCachedCustomHz; }
 static inline float getAODPanelBrightnessFactor(void) { return gCachedBrightnessFactor; }
 static inline float getCustomAODBrightnessFactor(void) { return gCachedBrightnessFactor; }
 
-// CHÍNH SÁCH NGẮT AOD TỰ ĐỘNG CHUẨN GỐC APPLE (IOKIT AN TOÀN - CHỐNG SIGTRAP VÀ LEAK BỘ NHỚ)
+// CHÍNH SÁCH NGẮT AOD TỰ ĐỘNG CHUẨN GỐC (DÙNG UIKIT THUẦN - KHÔNG XUNG ĐỘT MODULE C++)
 static inline BOOL shouldSuppressAODBySystemPolicies(void) {
     if ([[NSProcessInfo processInfo] isLowPowerModeEnabled]) {
         return YES;
     }
 
-    CFTypeRef powerInfo = IOPSCopyPowerSourcesInfo();
-    if (powerInfo) {
-        CFArrayRef powerSourcesList = IOPSCopyPowerSourcesList(powerInfo);
-        if (powerSourcesList) {
-            CFIndex count = CFArrayGetCount(powerSourcesList);
-            for (CFIndex i = 0; i < count; ++i) {
-                CFDictionaryRef desc = IOPSGetPowerSourceDescription(powerInfo, CFArrayGetValueAtIndex(powerSourcesList, i));
-                if (desc) {
-                    CFStringRef state = (CFStringRef)CFDictionaryGetValue(desc, CFSTR(kIOPSPowerSourceStateKey));
-                    if (state && CFStringCompare(state, CFSTR(kIOPSACPowerValue), 0) == kCFCompareEqualTo) {
-                        CFRelease(powerSourcesList);
-                        CFRelease(powerInfo);
-                        return NO;
-                    }
+    [UIDevice currentDevice].batteryMonitoringEnabled = YES;
+    float level = [UIDevice currentDevice].batteryLevel;
+    UIDeviceBatteryState state = [UIDevice currentDevice].batteryState;
 
-                    CFNumberRef curCapNum = (CFNumberRef)CFDictionaryGetValue(desc, CFSTR(kIOPSCurrentCapacityKey));
-                    CFNumberRef maxCapNum = (CFNumberRef)CFDictionaryGetValue(desc, CFSTR(kIOPSMaxCapacityKey));
-                    if (curCapNum && maxCapNum) {
-                        int cur = 0, max = 100;
-                        CFNumberGetValue(curCapNum, kCFNumberIntType, &cur);
-                        CFNumberGetValue(maxCapNum, kCFNumberIntType, &max);
-                        if (max > 0) {
-                            int percent = (cur * 100) / max;
-                            if (percent <= 5) { // Pin <= 5% -> ngắt AOD
-                                CFRelease(powerSourcesList);
-                                CFRelease(powerInfo);
-                                return YES;
-                            }
-                        }
-                    }
-                }
-            }
-            CFRelease(powerSourcesList);
-        }
-        CFRelease(powerInfo);
+    // Đang cắm sạc thì không chặn AOD
+    if (state == UIDeviceBatteryStateCharging || state == UIDeviceBatteryStateFull) {
+        return NO;
+    }
+
+    // Pin dưới hoặc bằng 5% thì ngắt AOD để bảo toàn nguồn
+    if (level >= 0.0f && level <= 0.05f) {
+        return YES;
     }
 
     return NO;
@@ -1345,7 +1319,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
 %subclass AODRealPreferencesController : PSListController
 
 - (id)specifiers {
-    NSMutableArray *specs = [self valueForKey:@"_specifiers"];
+    NSMutableArray *specs = [(id)self valueForKey:@"_specifiers"];
     if (specs && specs.count > 0) return specs;
 
     specs = [NSMutableArray array];
@@ -1422,7 +1396,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
         [specs addObject:brightSlider];
     }
 
-    [self setValue:specs forKey:@"_specifiers"];
+    [(id)self setValue:specs forKey:@"_specifiers"];
     return specs;
 }
 
@@ -1450,7 +1424,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
     CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
     loadAODPreferences();
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
-    [self reloadSpecifiers];
+    [(id)self reloadSpecifiers];
 }
 
 %new
@@ -1469,7 +1443,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
     CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
 
-    for (PSSpecifier *s in [self specifiers]) {
+    for (PSSpecifier *s in [(id)self specifiers]) {
         if ([[s propertyForKey:@"id"] isEqualToString:@"AOD_HZ_GROUP_ID"]) {
             [s setProperty:[NSString stringWithFormat:@"Hiện tại: %.0f Hz (Tần số quét màn hình khi hiển thị AOD tĩnh)", roundedHz] forKey:@"footerText"];
             break;
@@ -1493,7 +1467,7 @@ static Boolean replaced_MGGetBoolAnswer(CFStringRef property) {
     CFPreferencesAppSynchronize(CFSTR("com.jb.aodreal"));
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.jb.aodreal/preferences.changed"), NULL, NULL, YES);
 
-    for (PSSpecifier *s in [self specifiers]) {
+    for (PSSpecifier *s in [(id)self specifiers]) {
         if ([[s propertyForKey:@"id"] isEqualToString:@"AOD_BRIGHTNESS_GROUP_ID"]) {
             [s setProperty:[NSString stringWithFormat:@"Mức sáng: %.1f (Kéo thanh trượt để tinh chỉnh độ sáng đèn nền vừa mắt)", b] forKey:@"footerText"];
             break;
