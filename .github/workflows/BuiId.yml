@@ -14,18 +14,44 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Theos and SDKs
-        uses: Randomblock1/theos-action@v1
-        with:
-          # Có thể bỏ qua các dòng dưới vì đây là giá trị mặc định
-          theos-dir: 'theos'
-          theos-src: 'https://github.com/theos/theos'
-          theos-sdks: 'https://github.com/theos/sdks'
-          theos-sdks-branch: 'master'
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          # Cài đặt các gói phụ thuộc cơ bản
+          sudo apt-get install -y build-essential fakeroot rsync curl git perl dpkg-dev bzip2 zstd unzip xz-utils sudo libxml2-dev
+          # Lưu ý: 'libxml2-dev' được cài đặt tường minh, không dùng 'libxml2'
+
+      - name: Install Theos (patched for libxml2)
+        env:
+          THEOS: ${{ github.workspace }}/theos
+        run: |
+          export THEOS="$THEOS"
+          # Tải script cài đặt gốc
+          curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos -o /tmp/install-theos.sh
+          # Vá lỗi: thay thế 'libxml2' bằng 'libxml2-dev' trong lệnh apt
+          sed -i 's/ libxml2/ libxml2-dev/g' /tmp/install-theos.sh
+          # Chạy script đã vá
+          CI=1 bash /tmp/install-theos.sh
+          
+          echo "=== Toolchain check ==="
+          ls "$THEOS/toolchain/linux/iphone/bin/clang"
+
+      - name: Install iOS SDK manually
+        env:
+          THEOS: ${{ github.workspace }}/theos
+        run: |
+          export THEOS="$THEOS"
+          # Tải trực tiếp file SDK đã đóng gói sẵn (tránh lỗi pipe)
+          curl -L https://github.com/theos/sdks/releases/latest/download/iPhoneOS16.5.sdk.tar.xz --output /tmp/iPhoneOS16.5.sdk.tar.xz
+          # Giải nén SDK vào thư mục của Theos
+          tar -xf /tmp/iPhoneOS16.5.sdk.tar.xz -C "$THEOS/sdks/"
+          echo "=== SDKs check ==="
+          ls "$THEOS/sdks/"
 
       - name: Build package
+        env:
+          THEOS: ${{ github.workspace }}/theos
         run: |
-          export THEOS=${{ github.workspace }}/theos
           export PATH="$THEOS/bin:$PATH"
           make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
 
