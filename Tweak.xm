@@ -28,6 +28,9 @@ static NSInteger gBurnInShiftStep = 0;
 static id gInjectedSessionProvider = nil;
 static BOOL gAODDebug = NO;
 #define AODLOG(fmt, ...) do { if (gAODDebug) NSLog(@"AODHOOK " fmt, ##__VA_ARGS__); } while (0)
+static inline BOOL aodInAODFlow(void) {
+    return gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning;
+}
 
 // CỜ BẢO VỆ KHỞI ĐỘNG CHỈ DÀNH RIÊNG CHO SPRINGBOARD
 static BOOL gSpringBoardDidFinishLaunching = NO;
@@ -67,6 +70,33 @@ static inline void aodWriteValue(CFStringRef key, CFPropertyListRef value) {
     CFPreferencesSetAppValue(key, value, AOD_PREFS_DOMAIN);
     CFPreferencesAppSynchronize(AOD_PREFS_DOMAIN);
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), AOD_PREFS_NOTIFY, NULL, NULL, YES);
+}
+
+// TRẠNG THÁI DÙNG CHUNG: SpringBoard ghi, backboardd/PosterBoard đọc (mỗi tiến trình có biến static riêng)
+static void aodPublishState(void) {
+    if (!gIsSpringBoardProcess) return;
+    NSNumber *v = @((int)gCurrentState);
+    CFPreferencesSetAppValue(CFSTR("runtimeState"), (__bridge CFPropertyListRef)v, AOD_PREFS_DOMAIN);
+    CFPreferencesAppSynchronize(AOD_PREFS_DOMAIN);
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                         CFSTR("com.jb.aodreal/state"), NULL, NULL, YES);
+}
+
+#define AODSetState(x) do { gCurrentState = (x); aodPublishState(); AODLOG(@"state=%d", (int)gCurrentState); } while (0)
+
+static void AODStateCallback(CFNotificationCenterRef center, void *observer, CFStringRef name,
+                             const void *object, CFDictionaryRef userInfo) {
+    if (gIsSpringBoardProcess) return;
+    CFPreferencesAppSynchronize(AOD_PREFS_DOMAIN);
+    CFPropertyListRef v = CFPreferencesCopyAppValue(CFSTR("runtimeState"), AOD_PREFS_DOMAIN);
+    if (v) {
+        if (CFGetTypeID(v) == CFNumberGetTypeID()) {
+            int st = 0;
+            CFNumberGetValue((CFNumberRef)v, kCFNumberIntType, &st);
+            gCurrentState = (AODState)st;
+        }
+        CFRelease(v);
+    }
 }
 
 // Dải giá trị: Hz 2–5 (bước 1), độ sáng 2–30 (factor = mức / 1000; mặc định 25 = 0.025f)
@@ -502,13 +532,13 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
                 %orig(NO, completion);
                 return;
             }
-            if (gCurrentState == AODStateActive) {
+            if (aodInAODFlow()) {
                 %orig(YES, completion);
                 return;
             }
         } else {
             if (gCurrentState == AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) {
-                gCurrentState = AODStateActive;
+                AODSetState(AODStateActive);
             }
         }
     }
@@ -521,14 +551,14 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 %hook CAWindowServerDisplay
 
 - (float)refreshRate {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && aodInAODFlow()) {
         return getCustomAODRefreshRate(); // 1.0f -> 5.0f Hz
     }
     return %orig;
 }
 
 - (void)setRefreshRate:(float)rate {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && aodInAODFlow()) {
         %orig(getCustomAODRefreshRate());
         return;
     }
@@ -536,14 +566,14 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (BOOL)blankingRemovesPower {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
         return NO;
     }
     return %orig;
 }
 
 - (void)setBlankingRemovesPower:(BOOL)val {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
         %orig(NO);
         return;
     }
@@ -551,14 +581,14 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (BOOL)disabled {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
         return NO;
     }
     return %orig;
 }
 
 - (void)setDisabled:(BOOL)val {
-    if (isAODMasterEnabled() && val && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && val && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
         %orig(NO);
         return;
     }
@@ -566,14 +596,14 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (BOOL)isBlanked {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
         return NO;
     }
     return %orig;
 }
 
 - (void)setBlanked:(BOOL)blanked {
-    if (isAODMasterEnabled() && blanked && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && blanked && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
         %orig(NO);
         return;
     }
@@ -581,14 +611,14 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (BOOL)disablesUpdates {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && aodInAODFlow()) {
         return NO;
     }
     return %orig;
 }
 
 - (void)setDisablesUpdates:(BOOL)val {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && aodInAODFlow()) {
         %orig(NO);
         return;
     }
@@ -596,7 +626,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (BOOL)isFlipBookActive {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
         return YES;
     }
     return %orig;
@@ -618,7 +648,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (void)setFlipBookSuppressed:(BOOL)suppressed {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies() && suppressed) {
+    if (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies() && suppressed) {
         %orig(NO);
         return;
     }
@@ -626,7 +656,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (void)powerStateDidChange:(id)arg1 {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
         return;
     }
     %orig(arg1);
@@ -636,13 +666,13 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 
 %hook BKDisplayRenderOverlay
 - (BOOL)disablesDisplayBlanking { 
-    return (isAODMasterEnabled() && gCurrentState == AODStateActive) ? YES : %orig; 
+    return (isAODMasterEnabled() && aodInAODFlow()) ? YES : %orig; 
 }
 %end
 
 %hook BKDisplayManager
 - (void)setBlanked:(BOOL)blanked withReason:(id)reason {
-    if (isAODMasterEnabled() && blanked && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && blanked && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
         %orig(NO, reason);
         return;
     }
@@ -698,14 +728,14 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 %hook BLSHFlipbookSpecification
 
 - (double)framesPerSecond {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && aodInAODFlow()) {
         return (double)getCustomAODRefreshRate();
     }
     return %orig;
 }
 
 - (double)minimumGapDuration {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive) {
+    if (isAODMasterEnabled() && aodInAODFlow()) {
         double fps = (double)getCustomAODRefreshRate();
         return (fps <= 1.0) ? 1.0 : (1.0 / fps);
     }
@@ -724,7 +754,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (void)setSuppressed:(BOOL)suppressed {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies() && suppressed) {
+    if (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies() && suppressed) {
         %orig(NO);
         return;
     }
@@ -736,7 +766,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (void)suspendForReason:(id)reason {
-    if (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) {
+    if (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) {
         return;
     }
     %orig(reason);
@@ -751,7 +781,7 @@ static inline BOOL shouldSuppressAODBySystemPolicies(void) {
 }
 
 - (BOOL)isAlwaysOnActive { 
-    return (isAODMasterEnabled() && gCurrentState == AODStateActive && !shouldSuppressAODBySystemPolicies()) ? YES : %orig; 
+    return (isAODMasterEnabled() && aodInAODFlow() && !shouldSuppressAODBySystemPolicies()) ? YES : %orig; 
 }
 
 - (BOOL)isClientActive { 
@@ -821,7 +851,7 @@ static id gCachedFlipbookSpec = nil;
 
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
-    gCurrentState = AODStateIdle;
+    AODSetState(AODStateIdle);
     @try {
         UIViewController *statusBarVC = [self valueForKey:@"_statusBarViewController"];
         if (statusBarVC) {
@@ -863,13 +893,13 @@ static id gCachedFlipbookSpec = nil;
     if (!isAODMasterEnabled()) return;
 
     if (shouldSuppressAODBySystemPolicies()) {
-        gCurrentState = AODStateProximityOff;
+        AODSetState(AODStateProximityOff);
         return;
     }
 
     if (inactive) {
         if (gCurrentState == AODStateActive) return;
-        gCurrentState = AODStateTransitioning;
+        AODSetState(AODStateTransitioning);
 
         // Chu trình bấm khóa: Màn hình co nhẹ 0.985 và lặn dịu sáng trong 0.45s
         [UIView animateWithDuration:0.45f delay:0.0f options:UIViewAnimationOptionCurveEaseInOut animations:^{
@@ -884,7 +914,7 @@ static id gCachedFlipbookSpec = nil;
             if (finished && gCurrentState == AODStateTransitioning) {
                 AODLOG(@"transition finished -> AODStateActive");
                 // ĐÃ VÀO AOD HOÀN TOÀN -> LÚC NÀY MỚI ĐƯỢC PHÉP ẨN STATUS BAR VÀ PHÍM TẮT
-                gCurrentState = AODStateActive;
+                AODSetState(AODStateActive);
                 @try {
                     UIViewController *statusBarVC = [self valueForKey:@"_statusBarViewController"];
                     if (statusBarVC) {
@@ -903,7 +933,7 @@ static id gCachedFlipbookSpec = nil;
         }];
     } else {
         // ĐÁNH THỨC SÁNG MÀN HÌNH KHÓA: HIỆN LẠI ĐẦY ĐỦ 100% GIAO DIỆN NGAY LẬP TỨC
-        gCurrentState = AODStateIdle;
+        AODSetState(AODStateIdle);
 
         @try {
             UIViewController *statusBarVC = [self valueForKey:@"_statusBarViewController"];
@@ -1023,7 +1053,7 @@ static id gCachedFlipbookSpec = nil;
 
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
-    gCurrentState = AODStateIdle;
+    AODSetState(AODStateIdle);
     self.view.transform = CGAffineTransformIdentity;
     @try {
         UIViewController *statusBarVC = [self valueForKey:@"_statusBarViewController"];
@@ -1250,7 +1280,7 @@ static id gCachedFlipbookSpec = nil;
         if (state == 0) {
             // Chu trình khóa màn hình: Bắt đầu chuyển cảnh vào AOD
             if (gCurrentState != AODStateProximityOff && !shouldSuppressAODBySystemPolicies()) {
-                gCurrentState = AODStateTransitioning;
+                AODSetState(AODStateTransitioning);
                 AODLOG(@"lock -> begin AOD transition");
 
                 if (gCoverSheetVC && [gCoverSheetVC respondsToSelector:@selector(_updateAppearanceForAODTransitionToInactive:)]) {
@@ -1265,7 +1295,7 @@ static id gCachedFlipbookSpec = nil;
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)),
                                dispatch_get_main_queue(), ^{
                     if (gCurrentState == AODStateTransitioning) {
-                        gCurrentState = AODStateActive;
+                        AODSetState(AODStateActive);
                         AODLOG(@"safety net -> AODStateActive");
                     }
                 });
@@ -1274,7 +1304,7 @@ static id gCachedFlipbookSpec = nil;
             }
         } else if (state == 1 || state == 3) {
             // Mở màn hình khóa sáng hoặc nhấc máy: LẬP TỨC TRẢ VỀ IDLE VÀ KHÔI PHỤC GIAO DIỆN
-            gCurrentState = AODStateIdle;
+            AODSetState(AODStateIdle);
             gCurrentAODProgress = 1.0f;
             if (gCoverSheetVC && [gCoverSheetVC respondsToSelector:@selector(_updateAppearanceForAODTransitionToInactive:)]) {
                 dispatch_async(dispatch_get_main_queue(), ^{
@@ -1305,7 +1335,7 @@ static id gCachedFlipbookSpec = nil;
         }
         if (factor > 0.9f && gCurrentState == AODStateActive) {
             AODLOG(@"backlight back to full -> Idle");
-            gCurrentState = AODStateIdle;
+            AODSetState(AODStateIdle);
         }
     }
     %orig(factor, duration, source, completion);
@@ -1440,13 +1470,13 @@ static id gCachedFlipbookSpec = nil;
 
 - (void)lockUIFromSource:(int)source withOptions:(id)options {
     if (isAODMasterEnabled() && shouldSuppressAODBySystemPolicies()) {
-        gCurrentState = AODStateProximityOff;
+        AODSetState(AODStateProximityOff);
     }
     %orig;
 }
 
 - (void)unlockUIFromSource:(int)source withOptions:(id)options {
-    gCurrentState = AODStateIdle;
+    AODSetState(AODStateIdle);
     %orig;
 }
 
@@ -1479,7 +1509,7 @@ static id gCachedFlipbookSpec = nil;
     if (isAODMasterEnabled() && (gCurrentState == AODStateActive || gCurrentState == AODStateTransitioning)) {
         if ([gesture state] == UIGestureRecognizerStateRecognized || [gesture state] == UIGestureRecognizerStateEnded) {
             // Chạm đúp 2 lần ở AOD: Chuyển ngay về Idle và bật sáng màn hình khóa
-            gCurrentState = AODStateIdle;
+            AODSetState(AODStateIdle);
             [[%c(SBBacklightController) sharedInstance] setBacklightState:1 source:13 animated:YES completion:nil];
             
             SBLockScreenManager *lsm = [%c(SBLockScreenManager) sharedInstance];
@@ -1528,11 +1558,11 @@ static id gCachedFlipbookSpec = nil;
     if (!isAODMasterEnabled() || gCurrentState == AODStateIdle) return;
     
     if (inProximity) {
-        gCurrentState = AODStateProximityOff;
+        AODSetState(AODStateProximityOff);
         [[%c(SBBacklightController) sharedInstance] setBacklightState:0 source:1 animated:NO completion:nil];
     } else {
         if (!shouldSuppressAODBySystemPolicies()) {
-            gCurrentState = AODStateActive;
+            AODSetState(AODStateActive);
             [[%c(SBBacklightController) sharedInstance] setBacklightState:2 source:1 animated:YES completion:nil];
         }
     }
@@ -1910,7 +1940,12 @@ static PSSpecifier *makeAODSlider(id target, NSString *key, NSString *sid, float
     }
 
     [specs insertObjects:mine atIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, mine.count)]];
-    [self setValue:specs forKey:@"_specifiers"];
+    @try {
+        [self setValue:specs forKey:@"_specifiers"];
+    } @catch (NSException *e) {
+        AODLOG(@"set _specifiers failed: %@", e);
+    }
+    AODLOG(@"AOD subpage specifiers: %lu", (unsigned long)specs.count);
     return specs;
 }
 
@@ -1963,6 +1998,12 @@ static void initGroupPreferencesExplicitly(void) {
         gAODDebug = [[NSFileManager defaultManager] fileExistsAtPath:@"/var/mobile/aod_debug"];
 
         CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(), NULL,
+            (CFNotificationCallback)AODStateCallback,
+            CFSTR("com.jb.aodreal/state"), NULL,
+            CFNotificationSuspensionBehaviorDeliverImmediately);
+
+        CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
             NULL,
             (CFNotificationCallback)AODPreferencesReloadCallback,
@@ -1973,7 +2014,7 @@ static void initGroupPreferencesExplicitly(void) {
 
         if ([bundleID isEqualToString:@"com.apple.springboard"] || [processName isEqualToString:@"SpringBoard"]) {
             gIsSpringBoardProcess = YES;
-            gCurrentState = AODStateIdle;
+            AODSetState(AODStateIdle);
             %init(Group_SpringBoard);
         } else if ([bundleID isEqualToString:@"com.apple.PosterBoard"] || 
                    [processName.lowercaseString containsString:@"posterboard"]) {
