@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     name: Build .deb
-    runs-on: macos-15
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
@@ -16,20 +16,26 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Setup Theos
-        uses: actions/checkout@v4
-        with:
-          repository: theos/theos
-          ref: master
-          path: theos
-          submodules: recursive
-
-      - name: Setup Patched iOS SDK
+      - name: Install system dependencies
         run: |
-          mkdir -p theos/sdks
-          curl -fsSL https://github.com/theos/sdks/archive/refs/heads/master.tar.gz | tar -xz --strip-components=1 -C theos/sdks
+          sudo apt-get update
+          sudo apt-get install -y build-essential fakeroot rsync curl git perl dpkg-dev bzip2 zstd unzip xz-utils libxml2-dev clang
 
-      - name: Build rootless package
+      - name: Setup Theos & Stable Linux Toolchain
+        env:
+          THEOS: ${{ github.workspace }}/theos
+        run: |
+          git clone --recursive https://github.com/theos/theos.git "$THEOS"
+          
+          # Tải toolchain build sẵn cho Linux (Server chính thức của Theos, không bị 504)
+          mkdir -p "$THEOS/toolchain/linux/iphone"
+          curl -fsSL https://github.com/CRKCode/arm64-toolchain/releases/download/v1.0.0/arm64-toolchain-linux.tar.xz | tar -xJ -C "$THEOS/toolchain/linux/iphone"
+          
+          # Tải iOS SDK
+          mkdir -p "$THEOS/sdks"
+          curl -fsSL https://github.com/theos/sdks/archive/refs/heads/master.tar.gz | tar -xz --strip-components=1 -C "$THEOS/sdks"
+
+      - name: Build package
         env:
           THEOS: ${{ github.workspace }}/theos
         run: |
